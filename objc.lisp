@@ -1,5 +1,5 @@
-;;;; Objective-C to Lisp Bridge with Transparent Layer
-;;; Copyright (C) 2025 The Calendrical System
+;;;; P1: The Objective-C to Lisp Bridge with Transparent Layer
+;;; Copyright (C) 2025-2026 The Calendrical System
 ;;; SPDX-License-Identifier: 0BSD
 
 ;;; Objective-C to Lisp Binding with Transparent Layer
@@ -43,7 +43,7 @@
 ;; Raw Bindings (objc-raw.lisp) is needed from here
 
 
-;;;; Name Translator
+;;;; P2: Name Translator
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defvar *special-words*
@@ -130,7 +130,7 @@
   (translate-name-from-foreign "Protocol" (find-package "OBJC-META"))
 
 
-;;;; Objc type encoding
+;;;; P3: Obj-C type encoding
 
 ;;; Giving a objc type encoding,
 ;;; know the corresponding lisp type for method specifiers,
@@ -224,7 +224,7 @@
             parse-c-type-to-objc-encoding))
 
 
-;;;; Obj-C Object
+;;;; P4: The Obj-C Object
 
   (defclass objc-object ()
     ((obj :initarg :objc-object
@@ -283,7 +283,7 @@
   (export '(selector selector-name name objc-selector-type))
 
 
-;;;; Obj-C Property <=> Slot Definition
+;;;; P5: Obj-C Property <=> Slot Definition
 
   (defclass objc-property-slot (c2mop:standard-direct-slot-definition)
     ((property-name :initarg :property-name)
@@ -348,7 +348,7 @@ attributes ::= {:return-type  ret-type} | ; T
     (:value :string))
 
 
-;;;; Obj-C Class
+;;;; P6: The Obj-C Class
 
 ;;; Foreign Type
 
@@ -372,8 +372,7 @@ attributes ::= {:return-type  ret-type} | ; T
   (defmethod expand-to-foreign (obj (type objc-class-type))
     `(objc-obj ,obj))
 
-
-;;;; Lisp Class Metaobjects & Methods
+;;; Lisp Class Metaobjects & Methods
 
   (defclass objc-class (standard-class objc-object)
     ((objc-class-name :initarg :objc-class-name
@@ -393,7 +392,8 @@ attributes ::= {:return-type  ret-type} | ; T
 
   (defmethod c2mop:validate-superclass ((c1 objc-instancetype) (c2 standard-class)) t)
 
-;;; Slot
+
+;;;; P7: Obj-C property => Lisp slot converter
 
   (defmethod c2mop:direct-slot-definition-class ((class objc-class) &rest initargs)
     (declare (ignore initargs))
@@ -540,7 +540,7 @@ attributes ::= {:return-type  ret-type} | ; T
         (call-next-method)))
 
 
-;;;; Obj-C class => Lisp class converter
+;;;; P8: Obj-C class => Lisp class converter
   
   ;; --- Helper ---
   (defun class-ptr-symbol (ptr)
@@ -689,7 +689,7 @@ attributes ::= {:return-type  ret-type} | ; T
                    args)))))
   
 
-;;;; Helper Functions
+;;;; P9: Helper Functions
 
   (defun ensure-objc-class (object)
     ;; Basically just a typecase
@@ -739,7 +739,7 @@ attributes ::= {:return-type  ret-type} | ; T
   ;;   (:metaclass objc-class:ns-object))
 
 
-;;;; Obj-C Object (id) foreign translator
+;;;; P10: Obj-C Object (the objc `id') foreign translator
 
   (define-foreign-type objc-object-type () ()
     (:actual-type :pointer)
@@ -774,7 +774,7 @@ attributes ::= {:return-type  ret-type} | ; T
     `(translate-to-objc-id ,obj))
 
 
-;;;; Wrapper for some class-info fetching functions
+;;;; P11: Wrapper for some class-info query functions
 
   (macrolet ((copy-list-ptrs (func var)
                `(with-foreign-object (out-count :uint)
@@ -796,7 +796,7 @@ attributes ::= {:return-type  ret-type} | ; T
       (copy-list-ptrs class-copy-method-list class)))
 
 
-;;;; Obj-C Method
+;;;; P12: The Obj-C Method
 
 ;;; Foreign Type
 
@@ -923,464 +923,500 @@ attributes ::= {:return-type  ret-type} | ; T
              (objc-raw::class-replace-method ,class-obj (objc-obj sel) (callback ,lisp-name) ,objc-arg-types)
              (ensure-objc-method ,class-name (objc-raw::class-get-instance-method ,class-obj (objc-obj sel))))))))
 
-
-;;;; Obj-C Runtime
-
-;;; Other Obj-C Runtime Types
-
-  (defctype objc-ivar :pointer)
-  (defctype objc-property :pointer)
-  (defctype objc-imp :pointer) ;; void (*)(void) IMP (self, selector, ...)
-
-  (defcstruct objc-method-description
-    (:name :string)
-    (:types :string))
-
-;;; Basic Obj-C Runtime functions
-
-  (defcfun (class-get-name "class_getName" :library foundation)
-      :string
-    (cls objc-class))
-
-  (defcfun (class-get-superclass "class_getSuperclass" :library foundation)
-      :pointer
-    (cls objc-class))
-
-  (defcfun (class-is-meta-class "class_isMetaClass" :library foundation)
-      :boolean
-    (cls objc-class))
-
-  (defcfun (objc-get-instance-size "class_getInstanceSize" :library foundation)
-      :unsigned-int
-    (cls objc-class))
-
-  (defcfun (class-get-instance-variable "class_getInstanceVariable" :library foundation)
-      objc-ivar
-    (cls objc-class)
-    (name :string))
-
-  (defcfun (class-get-class-variable "class_getClassVariable" :library foundation)
-      objc-ivar
-    (cls objc-class)
-    (name :string))
-
-  (defcfun (class-add-ivar "class_addIvar" :library foundation)
-      :boolean
-    (class :pointer)
-    (name :string)
-    (size :ulong)
-    (alignment :uint8)
-    (types :string))
-
-  (defcfun (class-copy-ivar-list "class_copyIvarList" :library foundation)
-      (:pointer objc-ivar)
-    (cls objc-class)
-    (out-count (:pointer :uint)))
-
-  (defcfun (class-get-ivar-layout "class_getIvarLayout" :library foundation)
-      (:pointer :uint8)
-    (cls objc-class))
-
-  (defcfun (class-set-ivar-layout "class_setIvarLayout" :library foundation)
-      :void
-    (cls objc-class)
-    (layout (:pointer :uint8)))
-
-  (defcfun (class-get-weak-ivar-layout "class_getWeakIvarLayout" :library foundation)
-      (:pointer :uint8)
-    (cls objc-class))
-
-  (defcfun (class-set-weak-ivar-layout "class_setWeakIvarLayout" :library foundation)
-      :void
-    (cls objc-class)
-    (layout (:pointer :uint8)))
-
-  (defcfun (class-get-property "class_getProperty" :library foundation)
-      objc-property
-    (cls objc-class)
-    (name :string))
-
-  (defcfun (class-copy-property-list "class_copyPropertyList" :library foundation)
-      :pointer
-    (cls objc-class)
-    (out-count (:pointer :uint)))
-
-  (defcfun (class-add-method "class_addMethod" :library foundation)
-      :boolean
-    (cls objc-class)
-    (name selector)
-    (imp objc-imp)
-    (types :string))
-
-  (defcfun (class-get-instance-method "class_getInstanceMethod" :library foundation)
-      objc-method
-    (cls objc-class)
-    (name selector))
-
-  (defcfun (class-get-class-method "class_getClassMethod" :library foundation)
-      objc-method
-    (cls objc-class)
-    (name selector))
-
-  (defcfun (class-copy-method-list "class_copyMethodList" :library foundation)
-      :pointer
-    (cls objc-class)
-    (out-count (:pointer :uint)))
-
-  (defcfun (class-replace-method "class_replaceMethod" :library foundation)
-      objc-imp
-    (cls objc-class)
-    (name selector)
-    (imp objc-imp)
-    (types :string))
-
-  (defcfun (class-get-method-implementation "class_getMethodImplementation" :library foundation)
-      ;; WTF is the class_getMethodImplementation_stret ?
-      objc-imp
-    (cls objc-class)
-    (name selector))
-
-  (defcfun (class-responds-to-selector "class_respondsToSelector" :library foundation)
-      :boolean
-    (cls objc-class)
-    (selector selector))
-
-  (defcfun (class-add-property "class_addProperty" :library foundation)
-      :pointer
-    (cls objc-class)
-    (name :string)
-    (attributes (:pointer (:struct objc-property-attribute)))
-    (attribute-count :unsigned-int))
-
-  (defcfun (class-replace-property "class_replaceProperty" :library foundation)
-      :void
-    (cls objc-class)
-    (name :string)
-    (attributes (:pointer (:struct objc-property-attribute)))
-    (attribute-count :unsigned-int))
-
-  (defcfun (class-get-version "class_getVersion" :library foundation)
-      :int
-    (cls objc-class))
-
-  (defcfun (class-set-version "class_setVersion" :library foundation)
-      :void
-    (cls objc-class)
-    (version :int))
-
-  (defcfun (class-create-instance "class_createInstance" :library foundation)
-      objc-id
-    (cls objc-class)
-    (extra-bytes :uint))
-
-
-  (defcfun (objc-allocate-class-pair "objc_allocateClassPair" :library foundation)
-      objc-class
-    (superclass objc-class)
-    (name :string)
-    (extra-bytes :uint))
-
-  (defcfun (objc-dispose-class-pair "objc_disposeClassPair" :library foundation)
-      :void
-    (cls objc-class))
-
-  (defcfun (objc-register-class-pair "objc_registerClassPair" :library foundation)
-      :void
-    (cls objc-class))
-
-  (defcfun (objc-duplicate-class-pair "objc_duplicateClassPair" :library foundation)
-      objc-class
-    (original objc-class)
-    (name :string)
-    (extra-bytes :uint))
-
-  (defcfun (object-get-indexed-ivar "object_getIndexedIvars" :library foundation)
-      :void
-    (obj objc-id))
-
-  (defcfun (object-get-ivar "object_getIvar" :library foundation)
-      objc-id
-    (obj objc-id)
-    (ivar objc-ivar))
-
-  (defcfun (object-set-ivar "object_setIvar" :library foundation)
-      :void
-    (obj objc-id)
-    (ivar objc-ivar)
-    (value objc-id))
-
-  (defcfun (object-get-class-name "object_getClassName" :library foundation)
-      :string
-    (obj objc-id))
-
-  (defcfun (object-get-class "object_getClass" :library foundation)
-      objc-class
-    (obj objc-id))
-
-  (defcfun (object-set-class "object_setClass" :library foundation)
-      objc-class
-    (obj objc-id)
-    (cls objc-class))
-
-  (defcfun (objc-copy-class-list "objc_copyClassList" :library foundation)
-      objc-class
-    (out-count (:pointer :uint)))
-
-  (defcfun (objc-lookup-class "objc_lookUpClass" :library foundation)
-      objc-class
-    (name :string))
-
-  (defcfun (objc-get-class "objc_getClass" :library foundation)
-      objc-id
-    (name :string))
-
-  (defcfun (objc-get-required-class "objc_getRequiredClass" :library foundation)
-      objc-class
-    (name :string))
-
-  (defcfun (objc-get-meta-class "objc_getMetaClass" :library foundation)
-      objc-class
-    (name :string))
-
-
-  (defcfun (ivar-get-name "ivar_getName" :library foundation)
-      :string
-    (var objc-ivar))
-
-  (defcfun (ivar-get-type-encoding "ivar_getTypeEncoding" :library foundation)
-      :string
-    (var objc-ivar))
-
-  (defcfun (ivar-get-offset "ivar_getOffset" :library foundation)
-      :pointer
-    (var objc-ivar))
-
-  ;; objc_setAssociatedObject
-  ;; objc_getAssociatedObject
-  ;; objc_removeAssociatedObjects
-
-  (defcfun (method-get-name "method_getName" :library foundation)
-      selector
-    (method objc-method))
-
-  (defcfun (method-get-implementation "method_getImplementation" :library foundation)
-      objc-imp
-    (method objc-method))
-
-  (defcfun (method-get-type-encoding "method_getTypeEncoding" :library foundation)
-      :string
-    (method objc-method))
-
-  (defcfun (method-copy-return-type "method_copyReturnType" :library foundation)
-      :string
-    (method objc-method))
-
-  (defcfun (method-copy-argument-type "method_copyArgumentType" :library foundation)
-      :string
-    (method objc-method)
-    (index :uint))
-
-  ;; method_getReturnType
-
-  (defcfun (method-get-number-of-arguments "method_getNumberOfArguments" :library foundation)
-      :uint
-    (method objc-method))
-
-  ;; method_getArgumentType
-  ;; method_getDescription
-
-  (defcfun (method-set-implementation "method_setImplementation" :library foundation)
-      objc-imp
-    (method objc-method)
-    (imp objc-imp))
-
-  (defcfun (method-exchange-implementation "method_exchangeImplementation" :library foundation)
-      :void
-    (method1 objc-method)
-    (method2 objc-method))
-
-  ;; objc_copyImageNames
-  ;; class_getImageName
-  ;; objc_copyClassNamesForImage
-
-  (defcfun (sel-get-name "sel_getName" :library foundation)
-      :string
-    (sel selector))
-
-  (defcfun (sel-register-name "sel_registerName" :library foundation)
-      selector
-    (name :string))
-
-  (defcfun (sel-get-uid "sel_getUid" :library foundation)
-      selector
-    (str :string))
-
-  ;; sel_isEqual
-
-  (defcfun (property-get-name "property_getName" :library foundation)
-      :string
-    (prop objc-property))
-
-  (defcfun (property-copy-attribute-value "property_copyAttributeValue" :library foundation)
-      :string
-    (prop objc-property)
-    (name :string))
-
-  (defcfun (property-get-attributes "property_getAttributes" :library foundation)
-      :string
-    (prop objc-property))
-
-  (defcfun (property-copy-attribute-list "property_copyAttributeList" :library foundation)
-      (:pointer (:struct objc-property-attribute))
-    (prop objc-property)
-    (out-count (:pointer :uint)))
-
-  (defcfun (objc-msg-send "objc_msgSend" :library foundation)
-      :pointer
-    (instance objc-id)
-    (selector selector)
-    &rest)
-
-  (defcfun (method-invoke "method_invoke" :library foundation)
-      :pointer
-    (object objc-id)
-    (method objc-method)
-    &rest)
-
-
-;;;; Utils
-
-  (defmacro cls (name)
-    (typecase name
-      (string `(objc-lookup-class ,name))
-      (symbol (let ((real-sym (intern (symbol-name name) "OBJC-CLASS")))
-                (export real-sym "OBJC-CLASS")
-                `(ensure-objc-class ',real-sym)))
-      (t `(ensure-objc-class ,name))))
-
-  (defmacro meta (name)
-    (typecase name
-      (string `(objc-get-meta-class ,name))
-      (symbol (let ((real-sym (intern (symbol-name name) "OBJC-META")))
-                (export real-sym "OBJC-META")
-                `(ensure-objc-meta-class ',real-sym)))
-      (t `(ensure-objc-meta-class ,name))))
-
-  (defun selector (object)
-    (cond ((symbolp object)  (make-instance
-                              'selector
-                              :name (translate-name-to-foreign object (find-package "OBJC"))))
-          ((stringp object)  (make-instance 'selector :name object))
-          ((pointerp object) (make-instance 'selector :objc-object object))
-          (t (error "Wrong type of object for selector: ~A" object))))
-
-  (defmacro sel (name)
-    (let ((name (if (symbolp name)
-                    (translate-name-to-foreign name (find-package "OBJC"))
-                    name)))
-      `(selector ,name)))
-
-
-;;;; Structures
-
-;;; NSRange
-
-  (defcstruct (_-ns-range :class ns-range-tclass)
-    (location :ulong)
-    (length :ulong))
-
-  (defmethod translate-from-foreign :around (ptr (type ns-range-tclass))
-    (let ((plist (call-next-method)))
-      (cons (getf plist 'location) (getf plist 'length))))
-  (defmethod translate-into-foreign-memory :around (value (type ns-range-tclass) ptr)
-    (call-next-method (list 'location (car value) 'length (cdr value)) type ptr))
-
-  (defctype ns-range (:struct _-ns-range))
-
-;;; Point, Size, Rect
-
-  (defcstruct (cg-point :class cg-point-tclass)
-    (:x :double)
-    (:y :double))
-
-  (defcstruct (cg-size :class cg-size-tclass)
-    (:width :double)
-    (:height :double))
-
-  (defcstruct (cg-rect :class cg-rect-tclass)
-    (:origin (:struct cg-point))
-    (:size (:struct cg-size)))
-
-  (defmethod translate-from-foreign :around (ptr (type cg-point-tclass))
-    (let ((plist (call-next-method)))
-      (vector (getf plist :x) (getf plist :y))))
-
-  (defmethod translate-into-foreign-memory ((value vector) (type cg-point-tclass) ptr)
-    (translate-into-foreign-memory
-     (list :x (aref value 0) :y (aref value 1))
-     type ptr))
-
-  (defmethod translate-into-foreign-memory ((value list) (type cg-point-tclass) ptr)
-    (setf (getf value :x) (float (getf value :x) 0d0)
-          (getf value :y) (float (getf value :y) 0d0))
-    (call-next-method value type ptr))
-
-  (defmethod translate-from-foreign :around (ptr (type cg-size-tclass))
-    (let ((plist (call-next-method)))
-      (vector (getf plist :width) (getf plist :height))))
-
-  (defmethod translate-into-foreign-memory ((value vector) (type cg-size-tclass) ptr)
-    (translate-into-foreign-memory
-     (list :width (aref value 0) :height (aref value 1))
-     type ptr))
-
-  (defmethod translate-into-foreign-memory ((value list) (type cg-size-tclass) ptr)
-    (setf (getf value :width) (float (getf value :width) 0d0)
-          (getf value :height) (float (getf value :height) 0d0))
-    (call-next-method value type ptr))
-
-  (defmethod translate-from-foreign (ptr (type cg-rect-tclass))
-    (let ((plist (call-next-method)))
-      (vector (foreign-slot-value (getf plist :origin) '(:struct cg-point) :x)
-              (foreign-slot-value (getf plist :origin) '(:struct cg-point) :y)
-              (foreign-slot-value (getf plist :size) '(:struct cg-size) :width)
-              (foreign-slot-value (getf plist :size) '(:struct cg-size) :height))))
-
-  (defmethod translate-into-foreign-memory ((value vector) (type cg-rect-tclass) ptr)
-    (translate-into-foreign-memory
-     (list :origin (list :x (aref value 0) :y (aref value 1))
-           :size (list :width (aref value 2) :height (aref value 3)))
-     type ptr))
-
-  (defmethod translate-into-foreign-memory ((value list) (type cg-rect-tclass) ptr)
-    (if (= (length value) 8)
-        (call-next-method
-         (list :origin (list :x (float (getf value :x 0d0) 0d0) :y (float (getf value :y 0d0) 0d0))
-               :size (list :width (float (getf value :width 0d0) 0d0) :height (float (getf value :height 0d0) 0d0)))
-         type ptr)
-        (call-next-method
-         (list :origin (list :x (float (getf (getf value :origin) :x 0d0) 0d0) :y (float (getf (getf value :origin) :y 0d0) 0d0))
-               :size (list :width (float (getf (getf value :size) :width 0d0) 0d0) :height (float (getf (getf value :size) :height 0d0) 0d0)))
-         type ptr)))
-
-  (defctype ns-point (:struct cg-point))
-  (defctype ns-point-pointer (:pointer ns-point))
-  (defctype ns-size (:struct cg-size))
-  (defctype ns-size-pointer (:pointer ns-size))
-  (defctype ns-rect (:struct cg-rect))
-  (defctype ns-rect-pointer (:pointer (:struct cg-rect)))
-
-  (defcfun (ns-equal-rects "NSEqualRects" :library foundation)
-      :bool
-    (a-rect ns-rect)
-    (b-rect ns-rect))
+;;; ---
 
   (c2mop:finalize-inheritance (find-class 'objc-method))
   )
 
-;;; --- From now on the basic runtime is ready ---
+;;; --- From now on the basic runtime is ready, and the code below is not forcibly evaluated in compile time ---
+
 
-;; Obj-C Protocol
+;;;; P13: The Obj-C Runtime
+
+;;; Other Obj-C Runtime Types
+
+(defctype objc-ivar :pointer)
+(defctype objc-property :pointer)
+(defctype objc-imp :pointer) ;; void (*)(void) IMP (self, selector, ...)
+
+(defcstruct objc-method-description
+  (:name :string)
+  (:types :string))
+
+;;; Basic Obj-C Runtime functions
+
+(defcfun (class-get-name "class_getName" :library foundation)
+    :string
+  (cls objc-class))
+
+(defcfun (class-get-superclass "class_getSuperclass" :library foundation)
+    :pointer
+  (cls objc-class))
+
+(defcfun (class-is-meta-class "class_isMetaClass" :library foundation)
+    :boolean
+  (cls objc-class))
+
+(defcfun (objc-get-instance-size "class_getInstanceSize" :library foundation)
+    :unsigned-int
+  (cls objc-class))
+
+(defcfun (class-get-instance-variable "class_getInstanceVariable" :library foundation)
+    objc-ivar
+  (cls objc-class)
+  (name :string))
+
+(defcfun (class-get-class-variable "class_getClassVariable" :library foundation)
+    objc-ivar
+  (cls objc-class)
+  (name :string))
+
+(defcfun (class-add-ivar "class_addIvar" :library foundation)
+    :boolean
+  (class :pointer)
+  (name :string)
+  (size :ulong)
+  (alignment :uint8)
+  (types :string))
+
+(defcfun (class-copy-ivar-list "class_copyIvarList" :library foundation)
+    (:pointer objc-ivar)
+  (cls objc-class)
+  (out-count (:pointer :uint)))
+
+(defcfun (class-get-ivar-layout "class_getIvarLayout" :library foundation)
+    (:pointer :uint8)
+  (cls objc-class))
+
+(defcfun (class-set-ivar-layout "class_setIvarLayout" :library foundation)
+    :void
+  (cls objc-class)
+  (layout (:pointer :uint8)))
+
+(defcfun (class-get-weak-ivar-layout "class_getWeakIvarLayout" :library foundation)
+    (:pointer :uint8)
+  (cls objc-class))
+
+(defcfun (class-set-weak-ivar-layout "class_setWeakIvarLayout" :library foundation)
+    :void
+  (cls objc-class)
+  (layout (:pointer :uint8)))
+
+(defcfun (class-get-property "class_getProperty" :library foundation)
+    objc-property
+  (cls objc-class)
+  (name :string))
+
+(defcfun (class-copy-property-list "class_copyPropertyList" :library foundation)
+    :pointer
+  (cls objc-class)
+  (out-count (:pointer :uint)))
+
+(defcfun (class-add-method "class_addMethod" :library foundation)
+    :boolean
+  (cls objc-class)
+  (name selector)
+  (imp objc-imp)
+  (types :string))
+
+(defcfun (class-get-instance-method "class_getInstanceMethod" :library foundation)
+    objc-method
+  (cls objc-class)
+  (name selector))
+
+(defcfun (class-get-class-method "class_getClassMethod" :library foundation)
+    objc-method
+  (cls objc-class)
+  (name selector))
+
+(defcfun (class-copy-method-list "class_copyMethodList" :library foundation)
+    :pointer
+  (cls objc-class)
+  (out-count (:pointer :uint)))
+
+(defcfun (class-replace-method "class_replaceMethod" :library foundation)
+    objc-imp
+  (cls objc-class)
+  (name selector)
+  (imp objc-imp)
+  (types :string))
+
+(defcfun (class-get-method-implementation "class_getMethodImplementation" :library foundation)
+    ;; WTF is the class_getMethodImplementation_stret ?
+    objc-imp
+  (cls objc-class)
+  (name selector))
+
+(defcfun (class-responds-to-selector "class_respondsToSelector" :library foundation)
+    :boolean
+  (cls objc-class)
+  (selector selector))
+
+(defcfun (class-add-property "class_addProperty" :library foundation)
+    :pointer
+  (cls objc-class)
+  (name :string)
+  (attributes (:pointer (:struct objc-property-attribute)))
+  (attribute-count :unsigned-int))
+
+(defcfun (class-replace-property "class_replaceProperty" :library foundation)
+    :void
+  (cls objc-class)
+  (name :string)
+  (attributes (:pointer (:struct objc-property-attribute)))
+  (attribute-count :unsigned-int))
+
+(defcfun (class-get-version "class_getVersion" :library foundation)
+    :int
+  (cls objc-class))
+
+(defcfun (class-set-version "class_setVersion" :library foundation)
+    :void
+  (cls objc-class)
+  (version :int))
+
+(defcfun (class-create-instance "class_createInstance" :library foundation)
+    objc-id
+  (cls objc-class)
+  (extra-bytes :uint))
+
+
+(defcfun (objc-allocate-class-pair "objc_allocateClassPair" :library foundation)
+    objc-class
+  (superclass objc-class)
+  (name :string)
+  (extra-bytes :uint))
+
+(defcfun (objc-dispose-class-pair "objc_disposeClassPair" :library foundation)
+    :void
+  (cls objc-class))
+
+(defcfun (objc-register-class-pair "objc_registerClassPair" :library foundation)
+    :void
+  (cls objc-class))
+
+(defcfun (objc-duplicate-class-pair "objc_duplicateClassPair" :library foundation)
+    objc-class
+  (original objc-class)
+  (name :string)
+  (extra-bytes :uint))
+
+(defcfun (object-get-indexed-ivar "object_getIndexedIvars" :library foundation)
+    :void
+  (obj objc-id))
+
+(defcfun (object-get-ivar "object_getIvar" :library foundation)
+    objc-id
+  (obj objc-id)
+  (ivar objc-ivar))
+
+(defcfun (object-set-ivar "object_setIvar" :library foundation)
+    :void
+  (obj objc-id)
+  (ivar objc-ivar)
+  (value objc-id))
+
+(defcfun (object-get-class-name "object_getClassName" :library foundation)
+    :string
+  (obj objc-id))
+
+(defcfun (object-get-class "object_getClass" :library foundation)
+    objc-class
+  (obj objc-id))
+
+(defcfun (object-set-class "object_setClass" :library foundation)
+    objc-class
+  (obj objc-id)
+  (cls objc-class))
+
+(defcfun (objc-copy-class-list "objc_copyClassList" :library foundation)
+    objc-class
+  (out-count (:pointer :uint)))
+
+(defcfun (objc-lookup-class "objc_lookUpClass" :library foundation)
+    objc-class
+  (name :string))
+
+(defcfun (objc-get-class "objc_getClass" :library foundation)
+    objc-id
+  (name :string))
+
+(defcfun (objc-get-required-class "objc_getRequiredClass" :library foundation)
+    objc-class
+  (name :string))
+
+(defcfun (objc-get-meta-class "objc_getMetaClass" :library foundation)
+    objc-class
+  (name :string))
+
+
+(defcfun (ivar-get-name "ivar_getName" :library foundation)
+    :string
+  (var objc-ivar))
+
+(defcfun (ivar-get-type-encoding "ivar_getTypeEncoding" :library foundation)
+    :string
+  (var objc-ivar))
+
+(defcfun (ivar-get-offset "ivar_getOffset" :library foundation)
+    :pointer
+  (var objc-ivar))
+
+;; objc_setAssociatedObject
+;; objc_getAssociatedObject
+;; objc_removeAssociatedObjects
+
+(defcfun (method-get-name "method_getName" :library foundation)
+    selector
+  (method objc-method))
+
+(defcfun (method-get-implementation "method_getImplementation" :library foundation)
+    objc-imp
+  (method objc-method))
+
+(defcfun (method-get-type-encoding "method_getTypeEncoding" :library foundation)
+    :string
+  (method objc-method))
+
+(defcfun (method-copy-return-type "method_copyReturnType" :library foundation)
+    :string
+  (method objc-method))
+
+(defcfun (method-copy-argument-type "method_copyArgumentType" :library foundation)
+    :string
+  (method objc-method)
+  (index :uint))
+
+;; method_getReturnType
+
+(defcfun (method-get-number-of-arguments "method_getNumberOfArguments" :library foundation)
+    :uint
+  (method objc-method))
+
+;; method_getArgumentType
+;; method_getDescription
+
+(defcfun (method-set-implementation "method_setImplementation" :library foundation)
+    objc-imp
+  (method objc-method)
+  (imp objc-imp))
+
+(defcfun (method-exchange-implementation "method_exchangeImplementation" :library foundation)
+    :void
+  (method1 objc-method)
+  (method2 objc-method))
+
+;; objc_copyImageNames
+;; class_getImageName
+;; objc_copyClassNamesForImage
+
+(defcfun (sel-get-name "sel_getName" :library foundation)
+    :string
+  (sel selector))
+
+(defcfun (sel-register-name "sel_registerName" :library foundation)
+    selector
+  (name :string))
+
+(defcfun (sel-get-uid "sel_getUid" :library foundation)
+    selector
+  (str :string))
+
+;; sel_isEqual
+
+(defcfun (property-get-name "property_getName" :library foundation)
+    :string
+  (prop objc-property))
+
+(defcfun (property-copy-attribute-value "property_copyAttributeValue" :library foundation)
+    :string
+  (prop objc-property)
+  (name :string))
+
+(defcfun (property-get-attributes "property_getAttributes" :library foundation)
+    :string
+  (prop objc-property))
+
+(defcfun (property-copy-attribute-list "property_copyAttributeList" :library foundation)
+    (:pointer (:struct objc-property-attribute))
+  (prop objc-property)
+  (out-count (:pointer :uint)))
+
+(defcfun (objc-msg-send "objc_msgSend" :library foundation)
+    :pointer
+  (instance objc-id)
+  (selector selector)
+  &rest)
+
+(defcfun (method-invoke "method_invoke" :library foundation)
+    :pointer
+  (object objc-id)
+  (method objc-method)
+  &rest)
+
+
+;;;; P14: Obj-C built-in Structures
+
+;;; NSRange
+
+(defcstruct (_-ns-range :class ns-range-tclass)
+  (location :ulong)
+  (length :ulong))
+
+(defmethod translate-from-foreign :around (ptr (type ns-range-tclass))
+  (let ((plist (call-next-method)))
+    (cons (getf plist 'location) (getf plist 'length))))
+(defmethod translate-into-foreign-memory :around (value (type ns-range-tclass) ptr)
+  (call-next-method (list 'location (car value) 'length (cdr value)) type ptr))
+
+(defctype ns-range (:struct _-ns-range))
+
+;;; Point, Size, Rect
+
+(defcstruct (cg-point :class cg-point-tclass)
+  (:x :double)
+  (:y :double))
+
+(defcstruct (cg-size :class cg-size-tclass)
+  (:width :double)
+  (:height :double))
+
+(defcstruct (cg-rect :class cg-rect-tclass)
+  (:origin (:struct cg-point))
+  (:size (:struct cg-size)))
+
+(defmethod translate-from-foreign :around (ptr (type cg-point-tclass))
+  (let ((plist (call-next-method)))
+    (vector (getf plist :x) (getf plist :y))))
+
+(defmethod translate-into-foreign-memory ((value vector) (type cg-point-tclass) ptr)
+  (translate-into-foreign-memory
+   (list :x (aref value 0) :y (aref value 1))
+   type ptr))
+
+(defmethod translate-into-foreign-memory ((value list) (type cg-point-tclass) ptr)
+  (setf (getf value :x) (float (getf value :x) 0d0)
+        (getf value :y) (float (getf value :y) 0d0))
+  (call-next-method value type ptr))
+
+(defmethod translate-from-foreign :around (ptr (type cg-size-tclass))
+  (let ((plist (call-next-method)))
+    (vector (getf plist :width) (getf plist :height))))
+
+(defmethod translate-into-foreign-memory ((value vector) (type cg-size-tclass) ptr)
+  (translate-into-foreign-memory
+   (list :width (aref value 0) :height (aref value 1))
+   type ptr))
+
+(defmethod translate-into-foreign-memory ((value list) (type cg-size-tclass) ptr)
+  (setf (getf value :width) (float (getf value :width) 0d0)
+        (getf value :height) (float (getf value :height) 0d0))
+  (call-next-method value type ptr))
+
+(defmethod translate-from-foreign (ptr (type cg-rect-tclass))
+  (let ((plist (call-next-method)))
+    (vector (foreign-slot-value (getf plist :origin) '(:struct cg-point) :x)
+            (foreign-slot-value (getf plist :origin) '(:struct cg-point) :y)
+            (foreign-slot-value (getf plist :size) '(:struct cg-size) :width)
+            (foreign-slot-value (getf plist :size) '(:struct cg-size) :height))))
+
+(defmethod translate-into-foreign-memory ((value vector) (type cg-rect-tclass) ptr)
+  (translate-into-foreign-memory
+   (list :origin (list :x (aref value 0) :y (aref value 1))
+         :size (list :width (aref value 2) :height (aref value 3)))
+   type ptr))
+
+(defmethod translate-into-foreign-memory ((value list) (type cg-rect-tclass) ptr)
+  (if (= (length value) 8)
+      (call-next-method
+       (list :origin (list :x (float (getf value :x 0d0) 0d0) :y (float (getf value :y 0d0) 0d0))
+             :size (list :width (float (getf value :width 0d0) 0d0) :height (float (getf value :height 0d0) 0d0)))
+       type ptr)
+      (call-next-method
+       (list :origin (list :x (float (getf (getf value :origin) :x 0d0) 0d0) :y (float (getf (getf value :origin) :y 0d0) 0d0))
+             :size (list :width (float (getf (getf value :size) :width 0d0) 0d0) :height (float (getf (getf value :size) :height 0d0) 0d0)))
+       type ptr)))
+
+(defctype ns-point (:struct cg-point))
+(defctype ns-point-pointer (:pointer ns-point))
+(defctype ns-size (:struct cg-size))
+(defctype ns-size-pointer (:pointer ns-size))
+(defctype ns-rect (:struct cg-rect))
+(defctype ns-rect-pointer (:pointer (:struct cg-rect)))
+
+(defcfun (ns-equal-rects "NSEqualRects" :library foundation)
+    :bool
+  (a-rect ns-rect)
+  (b-rect ns-rect))
+
+
+;;;; P15: Utils
+
+(defmacro cls (name)
+  (typecase name
+    (string `(objc-lookup-class ,name))
+    (symbol (let ((real-sym (intern (symbol-name name) "OBJC-CLASS")))
+              (export real-sym "OBJC-CLASS")
+              `(ensure-objc-class ',real-sym)))
+    (t `(ensure-objc-class ,name))))
+
+(defmacro meta (name)
+  (typecase name
+    (string `(objc-get-meta-class ,name))
+    (symbol (let ((real-sym (intern (symbol-name name) "OBJC-META")))
+              (export real-sym "OBJC-META")
+              `(ensure-objc-meta-class ',real-sym)))
+    (t `(ensure-objc-meta-class ,name))))
+
+(defun selector (object)
+  (cond ((symbolp object)  (make-instance
+                            'selector
+                            :name (translate-name-to-foreign object (find-package "OBJC"))))
+        ((stringp object)  (make-instance 'selector :name object))
+        ((pointerp object) (make-instance 'selector :objc-object object))
+        (t (error "Wrong type of object for selector: ~A" object))))
+
+(defmacro sel (name)
+  (let ((name (if (symbolp name)
+                  (translate-name-to-foreign name (find-package "OBJC"))
+                  name)))
+    `(selector ,name)))
+
+
+;;;; P16: Utils for LispWorks-flavor Obj-C bridge
+
+(defun alloc-init-object (class)
+  (when (stringp class)
+    (setq class (objc-lookup-class class)))
+  (make-instance class))
+
+(defun invoke (object sel &rest args)
+  (when (stringp object)
+    (setq object (objc-lookup-class object)))
+  (when (stringp sel)
+    (setq sel (selector sel)))
+  (apply sel object args))
+
+(setf (fdefinition 'coerce-to-objc-class) #'ensure-objc-class)
+(setf (fdefinition 'coerce-to-selector) #'selector)
+
+(defmacro current-super (object)
+  (when (stringp object)
+    (setq object (objc-lookup-class object)))
+  (class-get-superclass object))
+
+(defun can-invoke-p (object sel)
+  (when (stringp object)
+    (setq object (objc-lookup-class object)))
+  (when (stringp sel)
+    (setq sel (selector sel)))
+  (class-responds-to-selector (class-of object) sel))
+
+(defun string-to-ns-string (string)
+  (funcall (sel string-with-utf8-string.) (cls ns-string) string))
+
+
+;; P17: The Obj-C Protocol
 
 ;;; Foreign type
 (define-foreign-type objc-protocol-type () ()
@@ -1505,7 +1541,7 @@ attributes ::= {:return-type  ret-type} | ; T
   (protocol objc-protocol)
   (other objc-protocol))
 
-;;; Lisp class
+;;; Lisp Class of the Protocol
 
 (defclass objc-meta:protocol () () (:metaclass objc-metaclass))
 
@@ -1514,7 +1550,7 @@ attributes ::= {:return-type  ret-type} | ; T
     (princ (protocol-get-name obj) stream)))
 
 
-;; Basic Obj-C objects
+;; P18: Basic Obj-C objects
 
 ;; This is one way to define Obj-C Classes
 (defclass objc-meta:ns-number () () (:metaclass objc-metaclass))
@@ -1564,39 +1600,6 @@ attributes ::= {:return-type  ret-type} | ; T
                    selector (sel "stringWithUTF8String:")
                    :string obj
                    :pointer))
-
-
-;;;; Utils like LispWorks Obj-C bridge
-
-(defun alloc-init-object (class)
-  (when (stringp class)
-    (setq class (objc-lookup-class class)))
-  (make-instance class))
-
-(defun invoke (object sel &rest args)
-  (when (stringp object)
-    (setq object (objc-lookup-class object)))
-  (when (stringp sel)
-    (setq sel (selector sel)))
-  (apply sel object args))
-
-(setf (fdefinition 'coerce-to-objc-class) #'ensure-objc-class)
-(setf (fdefinition 'coerce-to-selector) #'selector)
-
-(defmacro current-super (object)
-  (when (stringp object)
-    (setq object (objc-lookup-class object)))
-  (class-get-superclass object))
-
-(defun can-invoke-p (object sel)
-  (when (stringp object)
-    (setq object (objc-lookup-class object)))
-  (when (stringp sel)
-    (setq sel (selector sel)))
-  (class-responds-to-selector (class-of object) sel))
-
-(defun string-to-ns-string (string)
-  (funcall (sel string-with-utf8-string.) (cls ns-string) string))
 
 
 ;;;; Fancy time...
