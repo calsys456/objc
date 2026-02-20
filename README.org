@@ -1,16 +1,17 @@
-* Objective-C to Lisp Binding with Transparent Layer
+* Objective-C to Lisp Bridge with Transparent Layer
 
 Dependencies:
 #+BEGIN_SRC common-lisp
-(ql:quickload '(:alexandria :anaphora :closer-mop :cffi :cffi-libffi))
+(ql:quickload '(:alexandria :anaphora :closer-mop :cffi :cffi-libffi :float-features :trivial-main-thread))
 #+END_SRC
 
 Packages:
-- OBJC ::         Main Package
-- OBJC-CLASS ::   For Class Definitions
-- OBJC-META ::    For Metaclass Definitions
-- OBJC-METHOD ::  For Obj-C -> Lisp Generic Function Methods
-- OBJC-PROP ::    Obj-C Properties -> Lisp Slot Names
+- OBJC ::              Main Package
+- OBJC-CLASS ::        For Class Definitions
+- OBJC-META ::         For Metaclass Definitions
+- OBJC-INSTANCETYPE :: For [[https://developer.apple.com/library/archive/releasenotes/ObjectiveC/ModernizationObjC/AdoptingModernObjective-C/AdoptingModernObjective-C.html][instancetype]] Definitions
+- OBJC-METHOD ::       For Obj-C -> Lisp Generic Function Methods
+- OBJC-PROP ::         Obj-C Properties -> Lisp Slot Names
 
 #+BEGIN_QUOTE
 The source code is separated using titles and #\Page, please use ~C-x [~ and ~C-x ]~ to navigate throught subtitles.
@@ -102,13 +103,13 @@ To control the behaviour, you can use the MOP function ~ensure-class~, or even ~
                       :metaclass 'objc:objc-class
                       :auto-bind-properties nil
                       :auto-register-methods nil)
-  or
+  ;; or
   (defclass objc-class:ns-object () ()
     (:metaclass objc-class))
 #+end_src
 
 #+begin_quote
-FIXME: Currently we didn't implemented ~change-class~ relative methods on objc-class, so all class can only be defined once. Execution of the form above will signal error because ~NSObject~ has been defined. It's just demonstrating purpose.
+FIXME: Currently we didn't implemented ~change-class~ relative methods on objc-class, so all class can only be defined once. Execution of the form above will signal error because ~NSObject~ has been defined. It's just for demonstrating purpose.
 #+end_quote
 
 To make an instance:
@@ -117,9 +118,9 @@ To make an instance:
   (make-instance (cls ns-object))
 #+end_src
 
-Note that this is using ~class_createInstance~ runtime function, you may need to do additional initialization for the object.
+Note that this use ~class_createInstance~ runtime function, and you may need to do additional initialization for the object.
 
-or if you has the object's Obj-C pointer:
+or if you has the object's Obj-C pointer (the objc ~id~):
 
 #+begin_src lisp
   (make-instance (cls ns-object) :objc-object <pointer>)
@@ -129,7 +130,7 @@ To call a method:
 
 #+begin_src lisp
   (objc-method:new (objc:cls ns-object))
-  or
+  ;; or
   (funcall (objc:sel new) (objc:cls ns-object))
 
   ;; => #<OBJC-CLASS:NS-OBJECT {700964F153}>
@@ -141,6 +142,31 @@ Use ~slot-value~ to get the Obj-C property:
   (slot-value (objc-method:new (objc::cls ns-object)) 'objc-prop:hash)
   ;; => 105553174675536 (47 bits, #x6000037B4050)
 #+end_src
+
+** Todos
+
+*** TODO Features [20%]
+
+- [X] Wrapper for NSPoint, NSSize, NSRect, CGPoint, CGSize, CGRect
+- [ ] Parse type encoding for array, structure, union, bits
+- [ ] Give a better way to (partially) disable auto-translation of (certain) objc properties
+- [ ] Give a better way to (partially) disable auto-translation of (certain) objc methods
+- [ ] Give a way to (partially) disable auto-translation of (certain) objc class
+
+*** TODO Documentation [0%]
+
+- [ ] For class
+- [ ] For functions & generic functions
+- [ ] For slots
+- [ ] For MOP methods
+- [ ] For C functions
+- [ ] For Obj-C classes
+- [ ] For Obj-C methods
+- [ ] For Obj-C properties
+
+*** TODO Manual [0%]
+
+*** TODO Examples [0%]
 
 ** Source Explaination
 

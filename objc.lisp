@@ -1,35 +1,30 @@
-;; Copyright (C) 2025 The Calendrical System
-;; SPDX-License-Identifier: 0BSD
+;;;; Objective-C to Lisp Bridge with Transparent Layer
+;;; Copyright (C) 2025 The Calendrical System
+;;; SPDX-License-Identifier: 0BSD
 
-;; Objective-C to Lisp Binding with Transparent Layer
+;;; Objective-C to Lisp Binding with Transparent Layer
 
-;; Dependencies:
-;; (ql:quickload '(:alexandria :anaphora :closer-mop :cffi :cffi-libffi))
+;;; Dependencies:
+;;; (ql:quickload '(:alexandria :anaphora :closer-mop :cffi :cffi-libffi :float-features :trivial-main-thread))
 
-;; Packages:
-;; OBJC:         Main Package
-;; OBJC-CLASS:   For Class Definitions
-;; OBJC-META:    For Metaclass Definitions
-;; OBJC-METHOD:  For Obj-C -> Lisp Generic Function Methods
-;; OBJC-PROP:    Obj-C Properties -> Lisp Slot Names
+;;; Packages:
+;;; OBJC:              Main Package
+;;; OBJC-CLASS:        For Class Definitions
+;;; OBJC-META:         For Metaclass Definitions
+;;; OBJC-INSTANCETYPE: For instancetype Definitions
+;;; OBJC-METHOD:       For Obj-C -> Lisp Generic Function Methods
+;;; OBJC-PROP:         Obj-C Properties -> Lisp Slot Names
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (unless (find-package "OBJC")
     (make-package "OBJC" :use (list (find-package "CL")
                                     (find-package "CFFI")
                                     (find-package "ANAPHORA"))))
-  (dolist (pak '("OBJC-CLASS" "OBJC-META" "OBJC-METHOD" "OBJC-PROP"))
+  (dolist (pak '("OBJC-CLASS" "OBJC-META" "OBJC-INSTANCETYPE" "OBJC-METHOD" "OBJC-PROP"))
     (unless (find-package pak)
-      (make-package pak :use (list (find-package "OBJC")))))
+      (make-package pak :use (list (find-package "OBJC"))))))
 
-  (export (intern "ALLOC"     "OBJC-METHOD") "OBJC-METHOD")
-  (export (intern "INIT"      "OBJC-METHOD") "OBJC-METHOD")
-  (export (intern "PROTOCOL"  "OBJC-CLASS")  "OBJC-CLASS")
-  (export (intern "NS-OBJECT" "OBJC-CLASS")  "OBJC-CLASS")
-  (export (intern "NS-NUMBER" "OBJC-META")   "OBJC-META")
-  (export (intern "NS-STRING" "OBJC-META")   "OBJC-META"))
-
-;; Foreign Library
+;;;; Foreign Libraries
 
 (in-package "OBJC")
 
@@ -45,22 +40,16 @@
 (use-foreign-library cocoa)
 (use-foreign-library appkit)
 
-;; Raw Bindings (objc-raw.lisp) needs here
-
-(in-package "OBJC")
+;; Raw Bindings (objc-raw.lisp) is needed from here
 
-;; Name Translator
+
+;;;; Name Translator
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defvar *special-words*
     '("NS" "CG" "UTF8" "UI" "URL" "HTML" "PDF" "PNG" "RTFD" "RTF" "TIFF"))
   (defvar *special-translations*
     '(("NS-OBJECT" . "NSObject")))
-  
-  ;; (defmethod cffi:translate-name-from-foreign :around (name package &optional varp)
-  ;;   (call-next-method name (find-package package) varp))
-  ;; (defmethod cffi:translate-name-to-foreign :around (name package &optional varp)
-  ;;   (call-next-method name (find-package package) varp))
 
   (macrolet ((def-translate-from (pkg-name)
                `(defmethod cffi:translate-name-from-foreign
@@ -117,180 +106,204 @@
     (def-translate-to   "OBJC-CLASS" t)
     (def-translate-to   "OBJC-META" t)
     (def-translate-to   "OBJC-METHOD")
-    (def-translate-to   "OBJC-PROP")))
+    (def-translate-to   "OBJC-PROP"))
+
+  (dolist (name '("NSObject" "NSProtocol"
+                  "NSNumber" "NSValue"
+                  "NSString" "NSMutableString" "NSArray" "NSMutableArray"
+                  "NSSet" "NSMutableSet" "NSDictionary" "NSMutableDictionary"
+
+                  "NSApplication" "NSWorkspace" "NSPasteboard" "NSPasteboardItem"
+                  "NSDocument" "NSDocumentController" "NSPersistentDocument"
+                  "NSUserDefaultsController"
+                  "NSFilePromiseProvider" "NSFilePromiseReceiver"
+
+                  "NSView" "NSControl" "NSCell" "NSActionCell"
+                  "NSGridView" "NSGridCell" "NSGridColumn" "NSGridRow"
+                  "NSSplitView" "NSStackView" "NSTabView"
+                  "NSScrollView" "NSScroller" "NSClipView" "NSRulerView" "NSRulerMarker"
+
+                  "NSWindow"))
+    (translate-name-from-foreign name (find-package "OBJC-CLASS"))
+    (translate-name-from-foreign name (find-package "OBJC-META")))
+
+  (translate-name-from-foreign "Protocol" (find-package "OBJC-META"))
 
 
-;; Objc type encoding
+;;;; Objc type encoding
 
 ;;; Giving a objc type encoding,
 ;;; know the corresponding lisp type for method specifiers,
 ;;; know the corresponding C type for auto-translating method call and return value
 
-;; https://gcc.gnu.org/onlinedocs/gcc-5.3.0/gcc/Type-encoding.html
+;;; https://gcc.gnu.org/onlinedocs/gcc-5.3.0/gcc/Type-encoding.html
 
-(defvar *objc-types-map*
-  '((:objc #\c :c :char               :lisp character)
-    (:objc #\i :c :int                :lisp fixnum)
-    (:objc #\s :c :short              :lisp fixnum)
-    (:objc #\l :c :long               :lisp fixnum)
-    (:objc #\q :c :long-long          :lisp integer)
-    (:objc #\C :c :uchar              :lisp character)
-    (:objc #\I :c :uint               :lisp fixnum)
-    (:objc #\S :c :ushort             :lisp fixnum)
-    (:objc #\L :c :ulong              :lisp fixnum)
-    (:objc #\Q :c :unsigned-long-long :lisp integer)
-    (:objc #\f :c :float              :lisp single-float)
-    (:objc #\d :c :double             :lisp double-float)
-    (:objc #\B :c :boolean            :lisp t)
-    (:objc #\* :c :string             :lisp string)
-    (:objc #\@ :c objc-id             :lisp t)
-    (:objc #\# :c objc-class          :lisp objc-class)
-    (:objc #\: :c selector            :lisp selector)
-    (:objc #\{ :c :struct             :lisp struct)
-    ))
+  (defvar *objc-types-map*
+    '((:objc #\c :c :char               :lisp character)
+      (:objc #\i :c :int                :lisp fixnum)
+      (:objc #\s :c :short              :lisp fixnum)
+      (:objc #\l :c :long               :lisp fixnum)
+      (:objc #\q :c :long-long          :lisp integer)
+      (:objc #\C :c :uchar              :lisp character)
+      (:objc #\I :c :uint               :lisp fixnum)
+      (:objc #\S :c :ushort             :lisp fixnum)
+      (:objc #\L :c :ulong              :lisp fixnum)
+      (:objc #\Q :c :unsigned-long-long :lisp integer)
+      (:objc #\f :c :float              :lisp single-float)
+      (:objc #\d :c :double             :lisp double-float)
+      ;; Due to a bug of CFFI, #\B should be :int instead of :bool
+      (:objc #\B :c :int                :lisp t)
+      (:objc #\* :c :string             :lisp string)
+      (:objc #\@ :c objc-id             :lisp t)
+      (:objc #\# :c objc-class          :lisp objc-class)
+      (:objc #\: :c selector            :lisp selector)
+      (:objc #\{ :c :struct             :lisp struct)
+      (:objc #\v :c :void               :lisp t)
+      ))
 
-(defun parse-objc-type-encoding-to-lisp (char-or-str)
-  (let ((char (if (stringp char-or-str)
-                  (char (string-left-trim '(#\r #\n #\N #\o #\O #\R #\V) char-or-str) 0)
-                  char-or-str)))
-    (find-class
-     (aif (find-if (lambda (lst) (eql char (getf lst :objc)))
-                   *objc-types-map*)
-          (let ((lisp-type (getf it :lisp)))
-            (if (eq lisp-type 'struct)
-                ;; (translate-name-from-foreign
-                ;;  (subseq char-or-str 1 (position #\= char-or-str))
-                ;;  (find-package "OBJC"))
-                t
-                lisp-type))
-          t))))
+  (defun parse-objc-type-encoding-to-lisp (char-or-str)
+    (let ((char (if (stringp char-or-str)
+                    (char (string-left-trim '(#\r #\n #\N #\o #\O #\R #\V) char-or-str) 0)
+                    char-or-str)))
+      (find-class
+       (aif (find-if (lambda (lst) (eql char (getf lst :objc)))
+                     *objc-types-map*)
+            (let ((lisp-type (getf it :lisp)))
+              (if (eq lisp-type 'struct)
+                  ;; (translate-name-from-foreign
+                  ;;  (subseq char-or-str 1 (position #\= char-or-str))
+                  ;;  (find-package "OBJC"))
+                  t
+                  lisp-type))
+            t))))
 
-(defun parse-objc-type-encoding-to-c (char-or-str)
-  (let ((char (if (stringp char-or-str)
-                  (char (string-left-trim '(#\r #\n #\N #\o #\O #\R #\V) char-or-str) 0)
-                  char-or-str)))
-    (aif (find-if (lambda (lst) (eql char (getf lst :objc)))
-                  *objc-types-map*)
-         (let ((c-type (getf it :c)))
-           (if (eq c-type :struct)
-               (let ((struct-type (translate-name-from-foreign
-                                   (subseq char-or-str 1 (position #\= char-or-str))
-                                   (find-package "OBJC"))))
-                 (if (member struct-type '(_-ns-range cg-size cg-rect cg-point))
-                     (list :struct struct-type)
-                     :pointer))
-               c-type))
-         :pointer)))
-
-(defun parse-c-type-to-objc-encoding (c-type)
-  (aif (find-if (lambda (lst) (eq c-type (getf lst :c)))
-                *objc-types-map*)
-       (getf it :objc)
-       (if (subtypep c-type 'objc-object)
-           #\@
-           #\?)))
-
-(defun parse-lisp-type-to-c (lisp-type)
-  (aif (find-if (lambda (lst) (and (not (eq (getf lst :lisp) t))
-                                   (subtypep lisp-type (find-class (getf lst :lisp)))))
-                *objc-types-map*)
-       (getf it :c)
-       (if (subtypep lisp-type (find-class 'objc-object))
-           'objc-id
+  (defun parse-objc-type-encoding-to-c (char-or-str)
+    (let ((char (if (stringp char-or-str)
+                    (char (string-left-trim '(#\r #\n #\N #\o #\O #\R #\V) char-or-str) 0)
+                    char-or-str)))
+      (aif (find-if (lambda (lst) (eql char (getf lst :objc)))
+                    *objc-types-map*)
+           (let ((c-type (getf it :c)))
+             (if (eq c-type :struct)
+                 (let ((struct-type (translate-name-from-foreign
+                                     (subseq char-or-str 1 (position #\= char-or-str))
+                                     (find-package "OBJC"))))
+                   (if (member struct-type '(_-ns-range cg-size cg-rect cg-point))
+                       (list :struct struct-type)
+                       :pointer))
+                 c-type))
            :pointer)))
+  
+  (defun parse-c-type-to-objc-encoding (c-type)
+    (aif (find-if (lambda (lst) (eq c-type (getf lst :c)))
+                  *objc-types-map*)
+         (getf it :objc)
+         (if (subtypep c-type 'objc-object)
+             #\@
+             #\?)))
 
-(defun parse-lisp-type-to-objc-encoding (lisp-type)
-  (aif (find-if (lambda (lst) (subtypep lisp-type (find-class (getf lst :lisp))))
-                *objc-types-map*)
-       (getf it :objc)
-       #\?))
+  (defun parse-lisp-type-to-c (lisp-type)
+    (aif (find-if (lambda (lst) (and (not (eq (getf lst :lisp) t))
+                                     (subtypep lisp-type (find-class (getf lst :lisp)))))
+                  *objc-types-map*)
+         (getf it :c)
+         (if (subtypep lisp-type (find-class 'objc-object))
+             'objc-id
+             :pointer)))
 
-(export '(parse-lisp-type-to-c
-          parse-lisp-type-to-objc-encoding
-          parse-objc-type-encoding-to-c
-          parse-objc-type-encoding-to-lisp
-          parse-c-type-to-objc-encoding))
+  (defun parse-lisp-type-to-objc-encoding (lisp-type)
+    (aif (find-if (lambda (lst) (subtypep lisp-type (find-class (getf lst :lisp))))
+                  *objc-types-map*)
+         (getf it :objc)
+         #\?))
 
-
-;; Obj-C Object
-
-(defclass objc-object ()
-  ((obj :initarg :objc-object
-        :accessor objc-obj)))
-
-(defmethod initialize-instance ((instance objc-object) &rest initargs)
-  (apply #'shared-initialize instance t initargs)
-  (when (and (not (slot-boundp instance 'obj))
-             (typep (class-of instance) 'objc-object))
-    (setf (objc-obj instance)
-          (objc-raw::class-create-instance (objc-obj (class-of instance)) 0))))
-
-(export '(objc-obj objc-object obj))
-
-;; Obj-C Selector
-
-(defclass selector (objc-object function)
-  ((name  :type string
-          :initarg :name
-          :accessor selector-name))
-  (:metaclass c2mop:funcallable-standard-class))
-
-(defmethod print-object ((obj selector) stream)
-  (print-unreadable-object (obj stream :type t :identity t)
-    (princ (selector-name obj) stream)))
-
-(defmethod initialize-instance ((selector selector) &key name objc-object)
-  (cond (objc-object
-         (setf (objc-obj selector) objc-object
-               (selector-name selector) (objc-raw::sel-get-name objc-object)))
-        (name
-         (setf (selector-name selector) name
-               (objc-obj selector) (objc-raw::sel-register-name name)))
-        (t (error "One of initarg must be provided: :NAME or :OBJC-OBJECT")))
-  (c2mop:set-funcallable-instance-function
-   selector
-   (lambda (object &rest args)
-     (apply (ensure-objc-method (object-get-class object) selector)
-            object
-            args))))
-
-(define-foreign-type objc-selector-type () ()
-  (:actual-type :pointer)
-  (:simple-parser selector))
-
-(defmethod translate-from-foreign (ptr (type objc-selector-type))
-  (make-instance 'selector :objc-object ptr))
-(defmethod translate-to-foreign (obj (type objc-selector-type))
-  (objc-obj obj))
-(defmethod expand-from-foreign (ptr (type objc-selector-type))
-  `(make-instance 'selector :objc-object ,ptr))
-(defmethod expand-to-foreign (obj (type objc-selector-type))
-  `(objc-obj ,obj))
-
-(export '(selector selector-name name objc-selector-type))
+  (export '(parse-lisp-type-to-c
+            parse-lisp-type-to-objc-encoding
+            parse-objc-type-encoding-to-c
+            parse-objc-type-encoding-to-lisp
+            parse-c-type-to-objc-encoding))
 
 
-;; Obj-C Property <=> Slot Definition
+;;;; Obj-C Object
 
-(defclass objc-property-slot (c2mop:standard-direct-slot-definition)
-  ((property-name :initarg :property-name)
-   (getter-name   :initarg :getter-name)
-   (setter-name   :initarg :setter-name)
-   (read-only-p   :initarg :read-only-p)
-   (return-type   :initarg :return-type)
-   (ivar-name     :initarg :ivar-name)
-   (copy-p        :initarg :copy-p)
-   (retain-p      :initarg :retain-p)
-   (non-atomic-p  :initarg :non-atomic-p)
-   (dynamic-p     :initarg :dynamic-p)
-   (weak-p        :initarg :weak-p)
-   (gc-p          :initarg :gc-p)
+  (defclass objc-object ()
+    ((obj :initarg :objc-object
+          :accessor objc-obj))
+    (:metaclass standard-class))
+  
+  (defmethod initialize-instance ((instance objc-object) &rest initargs)
+    (apply #'shared-initialize instance t initargs)
+    (when (and (not (slot-boundp instance 'obj))
+               (typep (class-of instance) 'objc-object))
+      (setf (objc-obj instance)
+            (objc-raw::class-create-instance (objc-obj (class-of instance)) 0))))
 
-   (from-objc     :initarg :from-objc)
-   (lisp-only     :initform nil
-                  :initarg :lisp-only))
-  (:documentation
-   "properties ::= {(name [[attributes]])}*
+  (export '(objc-obj objc-object obj objc-instancetype))
+
+;;; Obj-C Selector
+
+  (defclass selector (objc-object #-ecl function)
+    ((name  :type string
+            :initarg :name
+            :accessor selector-name))
+    (:metaclass c2mop:funcallable-standard-class))
+
+  (defmethod print-object ((obj selector) stream)
+    (print-unreadable-object (obj stream :type t :identity t)
+      (princ (selector-name obj) stream)))
+
+  (defmethod initialize-instance ((selector selector) &key name objc-object)
+    (cond (objc-object
+           (setf (objc-obj selector) objc-object
+                 (selector-name selector) (objc-raw::sel-get-name objc-object)))
+          (name
+           (setf (selector-name selector) name
+                 (objc-obj selector) (objc-raw::sel-register-name name)))
+          (t (error "One of initarg must be provided: :NAME or :OBJC-OBJECT")))
+    (c2mop:set-funcallable-instance-function
+     selector
+     (lambda (object &rest args)
+       (apply (ensure-objc-method (object-get-class object) selector)
+              object
+              args))))
+
+  (define-foreign-type objc-selector-type () ()
+    (:actual-type :pointer)
+    (:simple-parser selector))
+
+  (defmethod translate-from-foreign (ptr (type objc-selector-type))
+    (make-instance 'selector :objc-object ptr))
+  (defmethod translate-to-foreign (obj (type objc-selector-type))
+    (objc-obj obj))
+  (defmethod expand-from-foreign (ptr (type objc-selector-type))
+    `(make-instance 'selector :objc-object ,ptr))
+  (defmethod expand-to-foreign (obj (type objc-selector-type))
+    `(objc-obj ,obj))
+
+  (export '(selector selector-name name objc-selector-type))
+
+
+;;;; Obj-C Property <=> Slot Definition
+
+  (defclass objc-property-slot (c2mop:standard-direct-slot-definition)
+    ((property-name :initarg :property-name)
+     (getter-name   :initarg :getter-name)
+     (setter-name   :initarg :setter-name)
+     (read-only-p   :initarg :read-only-p)
+     (return-type   :initarg :return-type)
+     (ivar-name     :initarg :ivar-name)
+     (copy-p        :initarg :copy-p)
+     (retain-p      :initarg :retain-p)
+     (non-atomic-p  :initarg :non-atomic-p)
+     (dynamic-p     :initarg :dynamic-p)
+     (weak-p        :initarg :weak-p)
+     (gc-p          :initarg :gc-p)
+
+     (from-objc     :initarg :from-objc)
+     (lisp-only     :initform nil
+                    :initarg :lisp-only))
+    (:documentation
+     "properties ::= {(name [[attributes]])}*
 attributes ::= {:return-type  ret-type} | ; T
                {:getter-name  name}     | ; G
                {:setter-name  name}     | ; S
@@ -305,1033 +318,1069 @@ attributes ::= {:return-type  ret-type} | ; T
                {:from-objc    boolean}
 "))
 
-(defclass objc-property (c2mop:standard-effective-slot-definition)
-  ((property-name :initarg :property-name)
-   (getter-name   :initarg :getter-name)
-   (setter-name   :initarg :setter-name)
-   (read-only-p   :initarg :read-only-p)
-   (return-type   :initarg :return-type)
-   (ivar-name     :initarg :ivar-name)
-   (copy-p        :initarg :copy-p)
-   (retain-p      :initarg :retain-p)
-   (non-atomic-p  :initarg :non-atomic-p)
-   (dynamic-p     :initarg :dynamic-p)
-   (weak-p        :initarg :weak-p)
-   (gc-p          :initarg :gc-p)))
+  (defclass objc-property (c2mop:standard-effective-slot-definition)
+    ((property-name :initarg :property-name)
+     (getter-name   :initarg :getter-name)
+     (setter-name   :initarg :setter-name)
+     (read-only-p   :initarg :read-only-p)
+     (return-type   :initarg :return-type)
+     (ivar-name     :initarg :ivar-name)
+     (copy-p        :initarg :copy-p)
+     (retain-p      :initarg :retain-p)
+     (non-atomic-p  :initarg :non-atomic-p)
+     (dynamic-p     :initarg :dynamic-p)
+     (weak-p        :initarg :weak-p)
+     (gc-p          :initarg :gc-p)))
 
-(defmethod print-object ((obj objc-property) stream)
-  (print-unreadable-object (obj stream :type t)
-    (with-slots (property-name return-type read-only-p) obj
-      (when read-only-p
-        (princ "(readonly) " stream))
-      (format stream "~A ~A"
-              (class-name (parse-objc-type-encoding-to-lisp return-type))
-              property-name))))
+  (defmethod print-object ((obj objc-property) stream)
+    (print-unreadable-object (obj stream :type t)
+      (with-slots (property-name return-type read-only-p) obj
+        (when read-only-p
+          (princ "(readonly) " stream))
+        (format stream "~A ~A"
+                (class-name (parse-objc-type-encoding-to-lisp return-type))
+                property-name))))
 
 ;;; Foreign structure to be used
 
-(defcstruct objc-property-attribute
-  (:name :string)
-  (:value :string))
+  (defcstruct objc-property-attribute
+    (:name :string)
+    (:value :string))
 
 
-;; Obj-C Class
+;;;; Obj-C Class
 
 ;;; Foreign Type
 
-(define-foreign-type objc-class-type () ()
-  (:actual-type :pointer)
-  (:simple-parser objc-class))
+  (define-foreign-type objc-class-type () ()
+    (:actual-type :pointer)
+    (:simple-parser objc-class))
 
-(defmethod translate-from-foreign (ptr (type objc-class-type))
-  (if (null-pointer-p ptr)
-      nil
-      (ensure-objc-class ptr)))
-(defmethod translate-to-foreign (obj (type objc-class-type))
-  (objc-obj obj))
-(defmethod expand-from-foreign (ptr (type objc-class-type))
-  `(if (null-pointer-p ,ptr)
-       nil
-       (ensure-objc-class ,ptr)))
-(defmethod expand-to-foreign (obj (type objc-class-type))
-  `(objc-obj ,obj))
+  (defmethod translate-from-foreign (ptr (type objc-class-type))
+    (if (null-pointer-p ptr)
+        nil
+        (ensure-objc-class ptr)))
+  (defmethod translate-to-foreign (obj (type objc-class-type))
+    (objc-obj obj))
+
+  (defmethod expand-from-foreign (ptr (type objc-class-type))
+    (alexandria:with-unique-names (ptr-var)
+      `(let ((,ptr-var ,ptr))
+         (if (null-pointer-p ,ptr-var)
+             nil
+             (ensure-objc-class ,ptr-var)))))
+  (defmethod expand-to-foreign (obj (type objc-class-type))
+    `(objc-obj ,obj))
 
 
-;;; Lisp Class Metaobjects & Methods
+;;;; Lisp Class Metaobjects & Methods
 
-(defclass objc-class (standard-class objc-object)
-  ((objc-class-name :initarg :objc-class-name
-                    :accessor objc-class-name)
-   (auto-bind-properties :initform t
-                         :initarg :auto-bind-properties)
-   (auto-register-methods :initform t
-                          :initarg :auto-register-methods)))
+  (defclass objc-class (standard-class objc-object)
+    ((objc-class-name :initarg :objc-class-name
+                      :accessor objc-class-name)
+     (auto-bind-properties :initform t
+                           :initarg :auto-bind-properties)
+     (auto-register-methods :initform t
+                            :initarg :auto-register-methods)))
 
-(defclass objc-metaclass (objc-class) ())
+  (defclass objc-metaclass (objc-class) ())
 
-(defmethod c2mop:validate-superclass ((c1 objc-class) (c2 standard-class)) t)
+  (defmethod c2mop:validate-superclass ((c1 objc-class) (c2 standard-class)) t)
 
-;;;; Slot
+;;; Obj-C instancetype
 
-(defmethod c2mop:direct-slot-definition-class ((class objc-class) &rest initargs)
-  (declare (ignore initargs))
-  (find-class 'objc-property-slot))
+  (defclass objc-instancetype (standard-class objc-object) ())
 
-(defmethod c2mop:effective-slot-definition-class ((class objc-class) &rest initargs)
-  (declare (ignore initargs))
-  (find-class 'objc-property))
+  (defmethod c2mop:validate-superclass ((c1 objc-instancetype) (c2 standard-class)) t)
 
-;;;; --- Helper ---
-(defun objc-property-default-setter-name (property-name)
-  (let ((name (copy-seq property-name)))
-    (setf (char name 0)
-          (char-upcase (char name 0)))
-    (concatenate 'string "set" name)))
-;;;; --- END helper ---
-(defmethod c2mop:compute-effective-slot-definition :around ((class objc-class) name slots)
-  (let ((slot      (car slots))
-        (class-ptr (slot-value class 'obj)))
-    (unless (typep slot 'objc-property-slot)
-      (return-from c2mop:compute-effective-slot-definition (call-next-method)))
-    (with-slots (property-name getter-name setter-name read-only-p return-type
-                 ivar-name copy-p retain-p non-atomic-p dynamic-p weak-p gc-p
-                 from-objc lisp-only)
-        slot
-      (when lisp-only
+;;; Slot
+
+  (defmethod c2mop:direct-slot-definition-class ((class objc-class) &rest initargs)
+    (declare (ignore initargs))
+    (find-class 'objc-property-slot))
+
+  (defmethod c2mop:effective-slot-definition-class ((class objc-class) &rest initargs)
+    (declare (ignore initargs))
+    (find-class 'objc-property))
+
+  ;; --- Helper ---
+  (defun objc-property-default-setter-name (property-name)
+    (let ((name (copy-seq property-name)))
+      (setf (char name 0)
+            (char-upcase (char name 0)))
+      (concatenate 'string "set" name)))
+  ;; --- END helper ---
+  (defmethod c2mop:compute-effective-slot-definition :around ((class objc-class) name slots)
+    (let ((slot      (car slots))
+          (class-ptr (slot-value class 'obj)))
+      (unless (typep slot 'objc-property-slot)
         (return-from c2mop:compute-effective-slot-definition (call-next-method)))
-      (if from-objc
-          (let* ((prop-name (or property-name
-                                (translate-to-foreign property-name "OBJC-PROP")))
-                 (prop (objc-raw::class-get-property class-ptr prop-name)))
-            (assert (not (null-pointer-p prop)))
-            (make-instance
-             'objc-property
-             :name            name
-             :initform        (c2mop:slot-definition-initform slot)
-             :initfunction    (c2mop:slot-definition-initfunction slot)
-             :type            (c2mop:slot-definition-type slot)
-             :allocation      (c2mop:slot-definition-allocation slot)
-             :initargs        (c2mop:slot-definition-initargs slot)
-             :documentation   (documentation slot t)
-             :property-name   prop-name
-             :getter-name     (or (property-copy-attribute-value prop "G")
-                                  prop-name)
-             :setter-name     (or (property-copy-attribute-value prop "S")
-                                  (objc-property-default-setter-name prop-name))
-             :read-only-p     (property-copy-attribute-value prop "R")
-             :return-type     (parse-objc-type-encoding-to-c
-                               (property-copy-attribute-value prop "T"))
-             :ivar-name       (property-copy-attribute-value prop "V")
-             :copy-p          (property-copy-attribute-value prop "C")
-             :retain-p        (property-copy-attribute-value prop "&")
-             :non-atomic-p    (property-copy-attribute-value prop "N")
-             :dynamic-p       (property-copy-attribute-value prop "D")
-             :weak-p          (property-copy-attribute-value prop "W")
-             :gc-p            (property-copy-attribute-value prop "P")))
-          
-          (let (prop-plist)
-            (unless property-name
-              (setf property-name (translate-name-to-foreign name (find-package "OBJC-PROP"))))
-            (push (list :name "T" :value return-type) prop-plist)
-            (when getter-name  (push (list :name "G" :value getter-name) prop-plist))
-            (when setter-name  (push (list :name "S" :value getter-name) prop-plist))
-            (when ivar-name    (push (list :name "V" :value ivar-name)   prop-plist))
-            (when read-only-p  (push (list :name "R" :value nil) prop-plist))
-            (when copy-p       (push (list :name "C" :value nil) prop-plist))
-            (when retain-p     (push (list :name "&" :value nil) prop-plist))
-            (when non-atomic-p (push (list :name "N" :value nil) prop-plist))
-            (when dynamic-p    (push (list :name "D" :value nil) prop-plist))
-            (when weak-p       (push (list :name "W" :value nil) prop-plist))
-            (when gc-p         (push (list :name "P" :value nil) prop-plist))
-            (let ((len (length prop-plist)))
-              (with-foreign-object (attr '(:struct objc-property-attribute) len)
-                (dotimes (i len)
-                  (setf (mem-aref attr '(:struct objc-property-attribute) i)
-                        (nth i prop-plist)))
-                (objc-raw::class-add-property class-ptr property-name attr len)))
-            (make-instance
-             'objc-property
-             :name            name
-             :initform        (c2mop:slot-definition-initform slot)
-             :initfunction    (c2mop:slot-definition-initfunction slot)
-             :type            (c2mop:slot-definition-type slot)
-             :allocation      (c2mop:slot-definition-allocation slot)
-             :initargs        (c2mop:slot-definition-initargs slot)
-             :documentation   (documentation slot t)
-             :property-name   property-name
-             :getter-name     (or getter-name property-name)
-             :setter-name     (or setter-name (objc-property-default-setter-name property-name))
-             :read-only-p     read-only-p
-             :return-type     return-type
-             :ivar-name       ivar-name
-             :copy-p          copy-p
-             :retain-p        retain-p
-             :non-atomic-p    non-atomic-p
-             :dynamic-p       dynamic-p
-             :weak-p          weak-p
-             :gc-p            gc-p)))
-      )))
+      (with-slots (property-name getter-name setter-name read-only-p return-type
+                   ivar-name copy-p retain-p non-atomic-p dynamic-p weak-p gc-p
+                   from-objc lisp-only)
+          slot
+        (when lisp-only
+          (return-from c2mop:compute-effective-slot-definition (call-next-method)))
+        (if from-objc
+            (let* ((prop-name (or property-name
+                                  (translate-to-foreign property-name "OBJC-PROP")))
+                   (prop (objc-raw::class-get-property class-ptr prop-name)))
+              (assert (not (null-pointer-p prop)))
+              (make-instance
+               'objc-property
+               :name            name
+               :initform        (c2mop:slot-definition-initform slot)
+               :initfunction    (c2mop:slot-definition-initfunction slot)
+               :type            (c2mop:slot-definition-type slot)
+               :allocation      (c2mop:slot-definition-allocation slot)
+               :initargs        (c2mop:slot-definition-initargs slot)
+               :documentation   (documentation slot t)
+               :property-name   prop-name
+               :getter-name     (or (property-copy-attribute-value prop "G")
+                                    prop-name)
+               :setter-name     (or (property-copy-attribute-value prop "S")
+                                    (objc-property-default-setter-name prop-name))
+               :read-only-p     (property-copy-attribute-value prop "R")
+               :return-type     (parse-objc-type-encoding-to-c
+                                 (property-copy-attribute-value prop "T"))
+               :ivar-name       (property-copy-attribute-value prop "V")
+               :copy-p          (property-copy-attribute-value prop "C")
+               :retain-p        (property-copy-attribute-value prop "&")
+               :non-atomic-p    (property-copy-attribute-value prop "N")
+               :dynamic-p       (property-copy-attribute-value prop "D")
+               :weak-p          (property-copy-attribute-value prop "W")
+               :gc-p            (property-copy-attribute-value prop "P")))
+            
+            (let (prop-plist)
+              (unless property-name
+                (setf property-name (translate-name-to-foreign name (find-package "OBJC-PROP"))))
+              (push (list :name "T" :value return-type) prop-plist)
+              (when getter-name  (push (list :name "G" :value getter-name) prop-plist))
+              (when setter-name  (push (list :name "S" :value getter-name) prop-plist))
+              (when ivar-name    (push (list :name "V" :value ivar-name)   prop-plist))
+              (when read-only-p  (push (list :name "R" :value nil) prop-plist))
+              (when copy-p       (push (list :name "C" :value nil) prop-plist))
+              (when retain-p     (push (list :name "&" :value nil) prop-plist))
+              (when non-atomic-p (push (list :name "N" :value nil) prop-plist))
+              (when dynamic-p    (push (list :name "D" :value nil) prop-plist))
+              (when weak-p       (push (list :name "W" :value nil) prop-plist))
+              (when gc-p         (push (list :name "P" :value nil) prop-plist))
+              (let ((len (length prop-plist)))
+                (with-foreign-object (attr '(:struct objc-property-attribute) len)
+                  (dotimes (i len)
+                    (setf (mem-aref attr '(:struct objc-property-attribute) i)
+                          (nth i prop-plist)))
+                  (objc-raw::class-add-property class-ptr property-name attr len)))
+              (make-instance
+               'objc-property
+               :name            name
+               :initform        (c2mop:slot-definition-initform slot)
+               :initfunction    (c2mop:slot-definition-initfunction slot)
+               :type            (c2mop:slot-definition-type slot)
+               :allocation      (c2mop:slot-definition-allocation slot)
+               :initargs        (c2mop:slot-definition-initargs slot)
+               :documentation   (documentation slot t)
+               :property-name   property-name
+               :getter-name     (or getter-name property-name)
+               :setter-name     (or setter-name (objc-property-default-setter-name property-name))
+               :read-only-p     read-only-p
+               :return-type     return-type
+               :ivar-name       ivar-name
+               :copy-p          copy-p
+               :retain-p        retain-p
+               :non-atomic-p    non-atomic-p
+               :dynamic-p       dynamic-p
+               :weak-p          weak-p
+               :gc-p            gc-p))))))
 
-(defmethod c2mop:slot-boundp-using-class
-    :around ((class objc-class) (object objc-object) (slot objc-property))
-  (declare (ignore class))
-  (if (slot-boundp slot 'getter-name) t
-      (call-next-method)))
+  (defmethod c2mop:slot-boundp-using-class
+      :around ((class objc-class) (object objc-object) (slot objc-property))
+    (declare (ignore class))
+    (if (slot-boundp slot 'getter-name) t
+        (call-next-method)))
 
-(defmethod c2mop:slot-value-using-class
-    :around ((class objc-class) (object objc-object) (slot objc-property))
-  (declare (ignore class))
-  (if (slot-boundp slot 'getter-name)
-      (with-slots (property-name getter-name return-type) slot
-        (let ((sel (objc-raw::sel-get-uid getter-name)))
-          (if (objc-raw::class-responds-to-selector (objc-obj class) sel)
-              (eval (list 'foreign-funcall
-                          "objc_msgSend"
-                          :pointer (slot-value object 'obj)
-                          :pointer sel
-                          return-type))
-              (error "Cannot resolve Obj-C property getter for ~A: ~A does not respond to ~A"
+  (defmethod c2mop:slot-value-using-class
+      :around ((class objc-class) (object objc-object) (slot objc-property))
+    (declare (ignore class))
+    (if (slot-boundp slot 'getter-name)
+        (with-slots (property-name getter-name return-type) slot
+          (let ((sel (objc-raw::sel-get-uid getter-name)))
+            (if (objc-raw::class-responds-to-selector (objc-obj class) sel)
+                (eval (list 'foreign-funcall
+                            "objc_msgSend"
+                            :pointer (slot-value object 'obj)
+                            :pointer sel
+                            return-type))
+                (error "Cannot resolve Obj-C property getter for ~A: ~A does not respond to ~A"
+                       property-name
+                       object
+                       getter-name))))
+        (call-next-method)))
+
+  (defmethod (setf c2mop:slot-value-using-class)
+      :around (new-value (class objc-class) (object objc-object) (slot objc-property))
+    (if (slot-boundp slot 'setter-name)
+        (with-slots (property-name setter-name read-only-p return-type) slot
+          (if read-only-p
+              (error "Obj-C property ~A for ~A is read-only"
                      property-name
-                     object
-                     getter-name))))
-      (call-next-method)))
-
-(defmethod (setf c2mop:slot-value-using-class)
-    :around (new-value (class objc-class) (object objc-object) (slot objc-property))
-  (if (slot-boundp slot 'setter-name)
-      (with-slots (property-name setter-name read-only-p return-type) slot
-        (if read-only-p
-            (error "Obj-C property ~A for ~A is read-only"
-                   property-name
-                   object)
-            (let ((sel (objc-raw::sel-get-uid setter-name)))
-              (if (objc-raw::class-responds-to-selector (objc-obj class) sel)
-                  (eval (list 'foreign-funcall
-                              "objc_msgSend"
-                              :pointer (slot-value object 'obj)
-                              :pointer sel
-                              return-type new-value))
-                  (error "Cannot resolve Obj-C property setter for ~A: ~A does not respond to ~A"
-                         property-name
-                         object
-                         setter-name))))
-        new-value)
-      (call-next-method)))
+                     object)
+              (let ((sel (objc-raw::sel-get-uid setter-name)))
+                (if (objc-raw::class-responds-to-selector (objc-obj class) sel)
+                    (eval (list 'foreign-funcall
+                                "objc_msgSend"
+                                :pointer (slot-value object 'obj)
+                                :pointer sel
+                                return-type new-value))
+                    (error "Cannot resolve Obj-C property setter for ~A: ~A does not respond to ~A"
+                           property-name
+                           object
+                           setter-name))))
+          new-value)
+        (call-next-method)))
 
 
-;;; Obj-C class => Lisp class converter
-
-;;;; --- Helper ---
-(defun class-ptr-symbol (ptr)
-  (declare (inline class-ptr-symbol))
-  (let ((name (objc-raw::class-get-name ptr)))
-    (if (objc-raw::class-is-meta-class ptr)
-        (translate-name-from-foreign name (find-package "OBJC-META"))
-        (translate-name-from-foreign name (find-package "OBJC-CLASS")))))
-;;;; --- Helper ---
-(defun compute-slot-specs-for-properties (class-ptr)
-  (with-foreign-object (out-count :uint)
-    (let* ((props-ptr (objc-raw::class-copy-property-list class-ptr out-count))
-           (len (mem-aref out-count :uint 0)))
-      (unwind-protect
-           (loop for i below len
-                 for prop = (mem-aref props-ptr :pointer i)
-                 for prop-name = (property-get-name prop)
-                 for slot-name = (translate-name-from-foreign prop-name
-                                                              (find-package "OBJC-PROP"))
-                 collect (list :name slot-name
-                               :property-name prop-name
-                               :from-objc t))
-        (foreign-free props-ptr)))))
-;;;; --- END Helper ---
-(defmethod c2mop:ensure-class-using-class
-    :around ((class null) name &rest args
-             &key direct-superclasses direct-slots metaclass
-               objc-class-name objc-object (auto-bind-properties t))
-  ;; Pass if it is not intended as an Obj-C class
-  (unless (subtypep metaclass 'objc-class)
-    (return-from c2mop:ensure-class-using-class (call-next-method)))
+;;;; Obj-C class => Lisp class converter
   
-  (let (class-ptr)
-    ;; If called with existing class
-    (when (and objc-object (not (cffi:null-pointer-p objc-object)))
-      (setq class-ptr objc-object))
-    ;; Resolve names
-    (if class-ptr
-        (unless objc-class-name
-          (setq objc-class-name
-                (objc-raw::class-get-name class-ptr)))
-        (unless objc-class-name
-          (setq objc-class-name (translate-name-to-foreign name (find-package "OBJC-CLASS")))))
-    ;; Try to find the possibly existing class
-    (when (or (null class-ptr) (null-pointer-p class-ptr))
-      (let ((ptr (objc-raw::objc-lookup-class objc-class-name)))
-        (unless (null-pointer-p ptr)
-          (setq class-ptr ptr))))
+  ;; --- Helper ---
+  (defun class-ptr-symbol (ptr)
+    (declare (inline class-ptr-symbol))
+    (let ((name (objc-raw::class-get-name ptr)))
+      (if (objc-raw::class-is-meta-class ptr)
+          (translate-name-from-foreign name (find-package "OBJC-META"))
+          (translate-name-from-foreign name (find-package "OBJC-CLASS")))))
+  ;; --- Helper ---
+  (defun instancetype-ptr-symbol (ptr)
+    (declare (inline instancetype-ptr-symbol))
+    (intern (format nil "~16R" (pointer-address ptr)) "OBJC-INSTANCETYPE"))
+  ;; --- Helper ---
+  (defun compute-slot-specs-for-properties (class-ptr)
+    (with-foreign-object (out-count :uint)
+      (let* ((props-ptr (objc-raw::class-copy-property-list class-ptr out-count))
+             (len (mem-aref out-count :uint 0)))
+        (unwind-protect
+             (loop for i below len
+                   for prop = (mem-aref props-ptr :pointer i)
+                   for prop-name = (property-get-name prop)
+                   for slot-name = (translate-name-from-foreign prop-name
+                                                                (find-package "OBJC-PROP"))
+                   collect (list :name slot-name
+                                 :property-name prop-name
+                                 :from-objc t))
+          (foreign-free props-ptr)))))
+  ;; --- END Helper ---
+  (defmethod c2mop:ensure-class-using-class :around ((class class) name &rest args &key metaclass)
+    (unless (subtypep metaclass 'objc-class)
+      (return-from c2mop:ensure-class-using-class (call-next-method)))
+    (unintern name)
+    (apply #'c2mop:ensure-class-using-class nil name args))
 
-    (if class-ptr
-        ;; Bind existing class to Lisp
-        (progn
-          (if (objc-raw::class-is-meta-class class-ptr)
-              ;; Obj-C Metaclass
-              (setq direct-superclasses
-                    (let* ((base-class (objc-raw::objc-lookup-class objc-class-name))
-                           (base-super (objc-raw::class-get-superclass base-class)))
-                      (if (null-pointer-p base-super)
-                          (list (find-class 'objc-class))
-                          (list  (foreign-funcall
-                                  "objc_getMetaClass"
-                                  :string (objc-raw::class-get-name base-super)
-                                  objc-class))))
-                    metaclass (find-class 'objc-metaclass))
-              ;; Normal class
-              (setq direct-superclasses
-                    (let ((super-ptr (objc-raw::class-get-superclass class-ptr)))
-                      (if (null-pointer-p super-ptr)
-                          (list (find-class 'objc-object))
-                          (list (let ((super-name (class-ptr-symbol super-ptr)))
-                                  (or (find-class super-name nil)
-                                      (c2mop:ensure-class super-name
-                                                          :objc-object super-ptr
-                                                          :metaclass 'objc-class))))))
-                    metaclass
-                    (let ((meta-ptr (objc-raw::objc-get-meta-class objc-class-name)))
-                      (c2mop:ensure-class (class-ptr-symbol meta-ptr)
-                                          :objc-object meta-ptr
-                                          :metaclass 'objc-class))))
-          ;; Bind Obj-C property to Lisp slot
-          (when auto-bind-properties
-            (setq direct-slots
-                  (nconc direct-slots (compute-slot-specs-for-properties class-ptr))))
-          ;; Done
-          (apply #'call-next-method class name
-                 :direct-superclasses direct-superclasses
-                 :direct-slots direct-slots
-                 :metaclass metaclass
-                 :objc-class-name objc-class-name
-                 :objc-object class-ptr
-                 args))
-        ;; Defining new Obj-C class from Lisp
-        (let ((super-ptr (aif (find-if (lambda (class) (typep class 'objc-class))
-                                       direct-superclasses)
-                              (slot-value it 'obj)
-                              (cffi:null-pointer)))
-              (meta-ptr (objc-raw::objc-get-meta-class objc-class-name)))
-          (setq class-ptr (objc-raw::objc-allocate-class-pair super-ptr objc-class-name 0))
-          (objc-raw::objc-register-class-pair class-ptr)
-          (setq metaclass (c2mop:ensure-class (class-ptr-symbol meta-ptr)
-                                              :objc-object meta-ptr
-                                              :metaclass 'objc-class))
-          (when auto-bind-properties
-            (setq direct-slots
-                  (nconc direct-slots (compute-slot-specs-for-properties class-ptr))))
-          (apply #'call-next-method class name
-                 :direct-superclasses direct-superclasses
-                 :direct-slots direct-slots
-                 :metaclass metaclass
-                 :objc-class-name objc-class-name
-                 :objc-object class-ptr
-                 args)))))
-
-;;;; For automatic Obj-C method => Lisp method binding
-(defmethod initialize-instance :after ((class objc-class) &key)
-  (when (slot-value class 'auto-register-methods)
-    (loop for ptr across (class-method-list-pointers class)
-          do (ensure-objc-method class ptr))))
-
+  (defmethod c2mop:ensure-class-using-class
+      :around ((class null) name &rest args
+               &key direct-superclasses direct-slots metaclass
+                 objc-class-name objc-object
+                 (auto-bind-properties t) (auto-register-methods t))
+    ;; Pass if it is not intended as an Obj-C class
+    (unless (subtypep metaclass 'objc-class)
+      (return-from c2mop:ensure-class-using-class (call-next-method)))
+    ;; instancetype
+    (when (and objc-object
+               (not (objc-raw::class-is-meta-class (objc-raw::object-get-class objc-object))))
+      (return-from c2mop:ensure-class-using-class
+        (c2mop:ensure-class (instancetype-ptr-symbol objc-object)
+                            :objc-object objc-object
+                            :metaclass 'objc-instancetype)))
+    ;; class
+    (let (class-ptr)
+      ;; If called with existing class
+      (when (and objc-object (not (null-pointer-p objc-object)))
+        (setq class-ptr objc-object))
+      ;; Resolve names
+      (if class-ptr
+          (unless objc-class-name
+            (setq objc-class-name
+                  (objc-raw::class-get-name class-ptr)))
+          (unless objc-class-name
+            (setq objc-class-name (translate-name-to-foreign name (find-package "OBJC-CLASS")))))
+      ;; Try to find the possibly existing class
+      (when (or (null class-ptr) (null-pointer-p class-ptr))
+        (let ((ptr (if (subtypep metaclass 'objc-metaclass)
+                       (objc-raw::objc-lookup-class objc-class-name)
+                       (objc-raw::objc-get-meta-class objc-class-name))))
+          (unless (null-pointer-p ptr)
+            (setq class-ptr ptr))))
+      ;; Let's rock & roll
+      (if class-ptr
+          ;; Bind existing class to Lisp
+          (progn
+            (if (objc-raw::class-is-meta-class class-ptr)
+                ;; Obj-C Metaclass
+                (progn
+                  ;; Put MetaClass into our package arbitrarily
+                  (let ((new-name (intern (symbol-name name) "OBJC-META")))
+                    (setq name new-name))
+                  (log:debug "Loading Meta Class" objc-class-name "into" name)
+                  (setq direct-superclasses
+                        (let* ((base-class (objc-raw::objc-lookup-class objc-class-name))
+                               (base-super (objc-raw::class-get-superclass base-class)))
+                          (if (null-pointer-p base-super)
+                              (list (find-class 'objc-class))
+                              (list  (foreign-funcall
+                                      "objc_getMetaClass"
+                                      :string (objc-raw::class-get-name base-super)
+                                      objc-class))))
+                        metaclass (find-class 'objc-metaclass)))
+                ;; Normal class
+                (progn
+                  (log:debug "Loading Normal Class" objc-class-name "into" name)
+                  (setq direct-superclasses
+                        (let ((super-ptr (objc-raw::class-get-superclass class-ptr)))
+                          (if (null-pointer-p super-ptr)
+                              (list (find-class 'objc-object))
+                              (list (let ((super-name (class-ptr-symbol super-ptr)))
+                                      (or (find-class super-name nil)
+                                          (c2mop:ensure-class super-name
+                                                              :objc-object super-ptr
+                                                              :metaclass 'objc-class))))))
+                        metaclass
+                        (let* ((meta-ptr (objc-raw::objc-get-meta-class objc-class-name))
+                               (meta-name (class-ptr-symbol meta-ptr)))
+                          (or (find-class meta-name nil)
+                              (c2mop:ensure-class (class-ptr-symbol meta-ptr)
+                                                  :objc-object meta-ptr
+                                                  :metaclass 'objc-metaclass))))))
+            ;; Bind Obj-C property to Lisp slot
+            (when auto-bind-properties
+              (setq direct-slots
+                    (nconc direct-slots (compute-slot-specs-for-properties class-ptr))))
+            ;; Done
+            (let ((class (apply #'call-next-method class name
+                                :direct-superclasses direct-superclasses
+                                :direct-slots direct-slots
+                                :metaclass metaclass
+                                :objc-class-name objc-class-name
+                                :objc-object class-ptr
+                                args)))
+              ;;; For automatic Obj-C method => Lisp method binding
+              (when auto-register-methods
+                (loop for ptr across (class-method-list-pointers class)
+                      do (ensure-objc-method class ptr)))
+              class))
+          ;; Defining new Obj-C class from Lisp
+          (let ((super-ptr (aif (find-if (lambda (class) (typep class 'objc-class))
+                                         direct-superclasses)
+                                (slot-value it 'obj)
+                                (null-pointer)))
+                (meta-ptr (objc-raw::objc-get-meta-class objc-class-name)))
+            (setq class-ptr (objc-raw::objc-allocate-class-pair super-ptr objc-class-name 0))
+            (objc-raw::objc-register-class-pair class-ptr)
+            (setq metaclass (c2mop:ensure-class (class-ptr-symbol meta-ptr)
+                                                :objc-object meta-ptr
+                                                :metaclass 'objc-class))
+            (when auto-bind-properties
+              (setq direct-slots
+                    (nconc direct-slots (compute-slot-specs-for-properties class-ptr))))
+            (apply #'call-next-method class name
+                   :direct-superclasses direct-superclasses
+                   :direct-slots direct-slots
+                   :metaclass metaclass
+                   :objc-class-name objc-class-name
+                   :objc-object class-ptr
+                   args)))))
+  
 
-;;; Helper Functions
+;;;; Helper Functions
 
-(defun ensure-objc-class (object)
-  ;; Basically just a typecase
-  (cond ((pointerp object)
-         (let ((name (class-ptr-symbol object)))
-           (or (find-class name nil)
-               (c2mop:ensure-class (class-ptr-symbol object)
+  (defun ensure-objc-class (object)
+    ;; Basically just a typecase
+    (cond ((pointerp object)
+           (if (objc-raw::class-is-meta-class (objc-raw::object-get-class object))
+               ;; class
+               (let ((name (class-ptr-symbol object)))
+                 (or (find-class name nil)
+                     (c2mop:ensure-class (class-ptr-symbol object)
+                                         :objc-object object
+                                         :metaclass 'objc-class)))
+               ;; instancetype
+               (c2mop:ensure-class (instancetype-ptr-symbol object)
                                    :objc-object object
-                                   :metaclass 'objc-class))))
-        ((typep object 'objc-class)
-         object)
-        ((symbolp object)
-         (or (find-class object nil)
-             (foreign-funcall
-              "objc_lookUpClass"
-              :string (translate-name-to-foreign object (find-package "OBJC-CLASS"))
-              objc-class)))
-        ((stringp object)
-         (or (find-class
-              (translate-name-from-foreign object (find-package "OBJC-CLASS"))
-              nil)
-             (foreign-funcall "objc_lookUpClass" :string object objc-class)))
-        (t (error "Invalid argument: ~A" object))))
+                                   :metaclass 'objc-instancetype)))
+          ((typep object 'objc-class)
+           object)
+          ((symbolp object)
+           (or (find-class object nil)
+               (foreign-funcall
+                "objc_lookUpClass"
+                :string (translate-name-to-foreign object (find-package "OBJC-CLASS"))
+                objc-class)))
+          ((stringp object)
+           (or (find-class
+                (translate-name-from-foreign object (find-package "OBJC-CLASS"))
+                nil)
+               (foreign-funcall "objc_lookUpClass" :string object objc-class)))
+          (t (error "Invalid argument: ~A" object))))
 
-(defun ensure-objc-meta-class (name-or-ptr)
-  (cond ((pointerp name-or-ptr)
-         (ensure-objc-class name-or-ptr))
-        ((symbolp name-or-ptr)
-         (or (find-class name-or-ptr nil)
-             (objc-get-meta-class
-              (translate-name-to-foreign name-or-ptr (find-package "OBJC-META")))))
-        ((stringp name-or-ptr)
-         (or (find-class
-              (translate-name-from-foreign name-or-ptr (find-package "OBJC-META"))
-              nil)
-             (objc-get-meta-class name-or-ptr)))
-        (t (error "Invalid argument: ~A" name-or-ptr))))
+  (defun ensure-objc-meta-class (name-or-ptr)
+    (cond ((pointerp name-or-ptr)
+           (ensure-objc-class name-or-ptr))
+          ((symbolp name-or-ptr)
+           (or (find-class name-or-ptr nil)
+               (objc-get-meta-class
+                (translate-name-to-foreign name-or-ptr (find-package "OBJC-META")))))
+          ((stringp name-or-ptr)
+           (or (find-class
+                (translate-name-from-foreign name-or-ptr (find-package "OBJC-META"))
+                nil)
+               (objc-get-meta-class name-or-ptr)))
+          (t (error "Invalid argument: ~A" name-or-ptr))))
 
-;; (defclass test-object (objc-class:ns-object)
-;;   ((prop :return-type :pointer))
-;;   (:metaclass objc-class:ns-object))
-
-
-;; Obj-C Object (id) foreign translator
-
-(define-foreign-type objc-object-type () ()
-  (:actual-type :pointer)
-  (:simple-parser objc-id))
-
-(defgeneric translate-from-objc-id (class pointer)
-  (:method ((class objc-object) pointer)
-    (make-instance class :objc-object pointer)))
-(defgeneric translate-to-objc-id (object)
-  (:method ((object objc-object))
-    (when object (objc-obj object) (cffi:null-pointer))))
-
-(defmethod translate-from-foreign (ptr (type objc-object-type))
-  (unless (null-pointer-p ptr)
-    (let ((class (foreign-funcall "object_getClass" :pointer ptr objc-class)))
-      (translate-from-objc-id class ptr))))
-(defmethod translate-to-foreign (obj (type objc-object-type))
-  (translate-to-objc-id obj))
-(defmethod expand-from-foreign (ptr (type objc-object-type))
-  `(unless (null-pointer-p ,ptr)
-     (let ((class (foreign-funcall "object_getClass" :pointer ,ptr objc-class)))
-       (translate-from-objc-id class ,ptr))))
-(defmethod expand-to-foreign (obj (type objc-object-type))
-  `(translate-to-objc-id ,obj))
+  ;; (defclass test-object (objc-class:ns-object)
+  ;;   ((prop :return-type :pointer))
+  ;;   (:metaclass objc-class:ns-object))
 
 
-;; Wrapper for some class-info fetching functions
+;;;; Obj-C Object (id) foreign translator
 
-(macrolet ((copy-list-ptrs (func var)
-             `(with-foreign-object (out-count :uint)
-                (setf (mem-aref out-count :uint 0) 0)
-                (let* ((ptr (,func (ensure-objc-class ,var) out-count))
-                       (len (mem-aref out-count :uint 0))
-                       (arr (make-array len :fill-pointer 0)))
-                  (unwind-protect
-                       (progn
-                         (dotimes (i len)
-                           (vector-push (mem-aref ptr :pointer i) arr))
-                         arr)
-                    (foreign-free ptr))))))
-  (defun class-ivar-list-pointers (class)
-    (copy-list-ptrs class-copy-ivar-list class))
-  (defun class-property-list-pointers (class)
-    (copy-list-ptrs class-copy-property-list class))
-  (defun class-method-list-pointers (class)
-    (copy-list-ptrs class-copy-method-list class)))
+  (define-foreign-type objc-object-type () ()
+    (:actual-type :pointer)
+    (:simple-parser objc-id))
+
+  (defgeneric translate-from-objc-id (class pointer)
+    (:method ((class objc-object) pointer)
+      (make-instance class :objc-object pointer))
+    (:method ((class objc-instancetype) pointer)
+      (let* ((instance (objc-raw::object-get-class pointer))
+             (class (foreign-funcall "object_getClass" :pointer instance objc-class)))
+        (make-instance class :objc-object instance))))
+  
+  (defgeneric translate-to-objc-id (object)
+    (:method ((object objc-object))
+      (when object (objc-obj object) (null-pointer))))
+
+  (defmethod translate-from-foreign (ptr (type objc-object-type))
+    (unless (null-pointer-p ptr)
+      (let ((class (foreign-funcall "object_getClass" :pointer ptr objc-class)))
+        (translate-from-objc-id class ptr))))
+  (defmethod translate-to-foreign (obj (type objc-object-type))
+    (translate-to-objc-id obj))
+  
+  (defmethod expand-from-foreign (ptr (type objc-object-type))
+    (alexandria:with-unique-names (ptr-var)
+      `(let ((,ptr-var ,ptr))
+         (unless (null-pointer-p ,ptr-var)
+           (let ((class (foreign-funcall "object_getClass" :pointer ,ptr-var objc-class)))
+             (translate-from-objc-id class ,ptr-var))))))
+  (defmethod expand-to-foreign (obj (type objc-object-type))
+    `(translate-to-objc-id ,obj))
 
 
-;; Obj-C Method
+;;;; Wrapper for some class-info fetching functions
+
+  (macrolet ((copy-list-ptrs (func var)
+               `(with-foreign-object (out-count :uint)
+                  (setf (mem-aref out-count :uint 0) 0)
+                  (let* ((ptr (,func (ensure-objc-class ,var) out-count))
+                         (len (mem-aref out-count :uint 0))
+                         (arr (make-array len :fill-pointer 0)))
+                    (unwind-protect
+                         (progn
+                           (dotimes (i len)
+                             (vector-push (mem-aref ptr :pointer i) arr))
+                           arr)
+                      (foreign-free ptr))))))
+    (defun class-ivar-list-pointers (class)
+      (copy-list-ptrs class-copy-ivar-list class))
+    (defun class-property-list-pointers (class)
+      (copy-list-ptrs class-copy-property-list class))
+    (defun class-method-list-pointers (class)
+      (copy-list-ptrs class-copy-method-list class)))
+
+
+;;;; Obj-C Method
 
 ;;; Foreign Type
 
-(define-foreign-type objc-method-type () ()
-  (:actual-type :pointer)
-  (:simple-parser objc-method))
+  (define-foreign-type objc-method-type () ()
+    (:actual-type :pointer)
+    (:simple-parser objc-method))
 
-(defmethod translate-from-foreign (ptr (type objc-method-type))
-  (translate-to-objc-method ptr))
-(defmethod translate-to-foreign (obj (type objc-method-type))
-  (objc-obj obj))
-(defmethod expand-from-foreign (ptr (type objc-method-type))
-  `(translate-to-objc-method ,ptr))
-(defmethod expand-to-foreign (obj (type objc-method-type))
-  `(objc-obj ,obj))
+  (defmethod translate-from-foreign (ptr (type objc-method-type))
+    (translate-to-objc-method ptr))
+  (defmethod translate-to-foreign (obj (type objc-method-type))
+    (objc-obj obj))
+  (defmethod expand-from-foreign (ptr (type objc-method-type))
+    `(translate-to-objc-method ,ptr))
+  (defmethod expand-to-foreign (obj (type objc-method-type))
+    `(objc-obj ,obj))
 
 ;;; defclass
 
-(defclass objc-method (standard-method objc-object)
-  ((selector :initarg :selector)
-   (return-type :initarg :return-type)))
+  (defclass objc-method (standard-method objc-object)
+    ((selector :initarg :selector)
+     (return-type :initarg :return-type)))
 
 ;;; Convert to method
 
-(defun translate-to-objc-method (ptr &rest arg-names)
-  (unless (null-pointer-p ptr)
-    (let* ((sel (foreign-funcall "method_getName" :pointer ptr selector))
-           (argnum (- (objc-raw::method-get-number-of-arguments ptr) 2))
-           (lambda-list (append arg-names
-                                (loop repeat (- argnum (length arg-names))
-                                      collect (gentemp "OBJC-METHOD-ARG-"))))
-           (type-encodings (loop for i from 2 below (+ argnum 2)
-                                 collect (objc-raw::method-copy-argument-type ptr i)))
-           (specializers (loop for type in type-encodings
-                               collect (parse-objc-type-encoding-to-lisp type)))
-           (foreign-types (loop for type in type-encodings
-                                collect (parse-objc-type-encoding-to-c type)))
-           (ret-type (parse-objc-type-encoding-to-c (objc-raw::method-copy-return-type ptr)))
-           (gf-proto     (c2mop:class-prototype (find-class 'standard-generic-function)))
-           (method-proto (c2mop:class-prototype (find-class 'objc-method))))
-      (multiple-value-bind (form initargs)
-          (c2mop:make-method-lambda
-           gf-proto method-proto
-           `(lambda (objc-object ,@lambda-list)
-              (foreign-funcall "method_invoke"
-                               :pointer (objc-obj objc-object)
-                               :pointer ,ptr
-                               ,@(mapcan #'list foreign-types lambda-list)
-                               ,ret-type))
-           nil)
-        (apply #'make-instance
-               'objc-method
-               :function (compile nil form)
-               :lambda-list (cons 'objc-object lambda-list)
-               :specializers (cons (find-class 'objc-object) specializers)
-               :qualifiers nil
-               :selector sel
-               :return-type ret-type
-               :objc-object ptr
-               initargs)))))
+  (defun translate-to-objc-method (ptr &rest arg-names)
+    (unless (null-pointer-p ptr)
+      (let* ((sel (foreign-funcall "method_getName" :pointer ptr selector))
+             (argnum (- (objc-raw::method-get-number-of-arguments ptr) 2))
+             (lambda-list (append arg-names
+                                  (loop repeat (- argnum (length arg-names))
+                                        collect (gentemp "OBJC-METHOD-ARG-"))))
+             (type-encodings (loop for i from 2 below (+ argnum 2)
+                                   collect (objc-raw::method-copy-argument-type ptr i)))
+             (specializers (loop for type in type-encodings
+                                 collect (parse-objc-type-encoding-to-lisp type)))
+             (foreign-types (loop for type in type-encodings
+                                  collect (parse-objc-type-encoding-to-c type)))
+             (ret-type (parse-objc-type-encoding-to-c (objc-raw::method-copy-return-type ptr)))
+             (gf-proto     (c2mop:class-prototype (find-class 'standard-generic-function)))
+             (method-proto (c2mop:class-prototype (find-class 'objc-method)))
+             (lambda-exp `(lambda (objc-object ,@lambda-list)
+                            (foreign-funcall "method_invoke"
+                                             :pointer (objc-obj objc-object)
+                                             :pointer ,ptr
+                                             ,@(mapcan #'list foreign-types lambda-list)
+                                             ,ret-type))))
+        (multiple-value-bind (form initargs)
+            (c2mop:make-method-lambda gf-proto method-proto lambda-exp nil)
+          (values (apply #'make-instance
+                         'objc-method
+                         :function (compile nil form)
+                         :lambda-list (cons 'objc-object lambda-list)
+                         :specializers (cons (find-class 'objc-object) specializers)
+                         :qualifiers nil
+                         :selector sel
+                         :return-type ret-type
+                         :objc-object ptr
+                         initargs)
+                  lambda-exp)))))
 
 ;;; Convert to Generic Function
 
-(defun ensure-objc-method (class object &rest arg-names)
-  "Name can be a string, symbol, selector or cffi pointer of the method"
-  (setq class (ensure-objc-class class))
-  (let (name sel)
-    (typecase object
-      (selector (setq sel object
-                      name (translate-name-from-foreign
-                            (selector-name sel) (find-package "OBJC-METHOD"))))
-      (string (setq sel (make-instance 'selector :name object)
-                    name (translate-name-from-foreign object (find-package "OBJC-METHOD"))))
-      (symbol (setq sel (make-instance
-                         'selector
-                         :name (translate-to-foreign object (find-package "OBJC-METHOD")))))
-      (t (if (pointerp object)
-             (setq sel (foreign-funcall
-                        "sel_registerName"
-                        :string (objc-raw::sel-get-name (objc-raw::method-get-name object))
-                        selector)
-                   name (translate-name-from-foreign
-                         (selector-name sel) (find-package "OBJC-METHOD")))
-             (error "Wrong type of argument: ~A" object))))
-    (if (fboundp name) name
-        (let ((method-ptr (foreign-funcall "class_getInstanceMethod"
-                                           objc-class class
-                                           selector sel
-                                           :pointer)))
-          (assert (not (null-pointer-p method-ptr)))
-          (let ((gf (ensure-generic-function name)))
-            (add-method gf (apply #'translate-to-objc-method method-ptr arg-names))
-            gf)))))
+  (defun ensure-objc-method (class object &rest arg-names)
+    "Name can be a string, symbol, selector or cffi pointer of the method"
+    (setq class (ensure-objc-class class))
+    (let (name sel)
+      (typecase object
+        (selector (setq sel object
+                        name (translate-name-from-foreign
+                              (selector-name sel) (find-package "OBJC-METHOD"))))
+        (string (setq sel (make-instance 'selector :name object)
+                      name (translate-name-from-foreign object (find-package "OBJC-METHOD"))))
+        (symbol (setq sel (make-instance
+                           'selector
+                           :name (translate-to-foreign object (find-package "OBJC-METHOD")))))
+        (t (if (pointerp object)
+               (setq sel (foreign-funcall
+                          "sel_registerName"
+                          :string (objc-raw::sel-get-name (objc-raw::method-get-name object))
+                          selector)
+                     name (translate-name-from-foreign
+                           (selector-name sel) (find-package "OBJC-METHOD")))
+               (error "Wrong type of argument: ~A" object))))
+      (if (fboundp name) name
+          (let ((method-ptr (foreign-funcall "class_getInstanceMethod"
+                                             objc-class class
+                                             selector sel
+                                             :pointer)))
+            (assert (not (null-pointer-p method-ptr)))
+            (log:debug "Registering Obj-C method function" name)
+            (let ((gf (ensure-generic-function name)))
+              (add-method gf (apply #'translate-to-objc-method method-ptr arg-names))
+              gf)))))
 
 ;;; Defining new method
-
-;; FIXME: Redefining old method will not flush some method cache at the Lisp side
-
-(defmacro define-objc-method (name-and-options return-type args &body body)
-  (multiple-value-bind (body decls)
-      (alexandria:parse-body body)
-    (let (lisp-name
-          selector-name
-          arg-and-types)
-      (if (listp name-and-options)
-          (setq lisp-name (first name-and-options)
-                selector-name (second name-and-options))
-          (setq lisp-name name-and-options
-                selector-name (translate-name-to-foreign lisp-name (find-package "OBJC"))))
-      (setq arg-and-types (append (list (first args)) '((_cmd selector)) (rest args)))
-      (let* ((objc-arg-types (let ((types (make-array (1+ (length arg-and-types)) :element-type 'character :fill-pointer 0)))
-                               (vector-push (parse-c-type-to-objc-encoding return-type) types)
-                               (dolist (arg arg-and-types)
-                                 (vector-push (parse-c-type-to-objc-encoding (second arg)) types))
-                               types))
-             (c-arg-types (loop for arg in arg-and-types
-                                collect (list (first arg) (parse-lisp-type-to-c (second arg)))))
-             (class-name (ensure-objc-class (second (first args))))
-             (class-obj (objc-obj class-name)))
-        `(let ((sel (make-instance 'selector :name ,selector-name)))
-           (defcallback ,lisp-name ,return-type ,c-arg-types
-             ,(if decls (append decls '((ignorable _cmd)))
-                  '(declare (ignorable _cmd)))
-             ,@body)
-           (objc-raw::class-replace-method ,class-obj (objc-obj sel) (callback ,lisp-name) ,objc-arg-types)
-           (ensure-objc-method ,class-name (objc-raw::class-get-instance-method ,class-obj (objc-obj sel)))))))
-  )
-
-;; Other Obj-C runtime types
-
-(defctype objc-ivar :pointer)
-(defctype objc-property :pointer)
-(defctype objc-imp :pointer) ;; void (*)(void) IMP (self, selector, ...)
-
-(defcstruct objc-method-description
-  (:name :string)
-  (:types :string))
-
-;; Basic Obj-C Runtime functions
-
-(defcfun (class-get-name "class_getName" :library foundation)
-    :string
-  (cls objc-class))
-
-(defcfun (class-get-superclass "class_getSuperclass" :library foundation)
-    :pointer
-  (cls objc-class))
-
-(defcfun (class-is-meta-class "class_isMetaClass" :library foundation)
-    :boolean
-  (cls objc-class))
-
-(defcfun (objc-get-instance-size "class_getInstanceSize" :library foundation)
-    :unsigned-int
-  (cls objc-class))
-
-(defcfun (class-get-instance-variable "class_getInstanceVariable" :library foundation)
-    objc-ivar
-  (cls objc-class)
-  (name :string))
-
-(defcfun (class-get-class-variable "class_getClassVariable" :library foundation)
-    objc-ivar
-  (cls objc-class)
-  (name :string))
-
-(defcfun (class-add-ivar "class_addIvar" :library foundation)
-    :boolean
-  (class :pointer)
-  (name :string)
-  (size :ulong)
-  (alignment :uint8)
-  (types :string))
-
-(defcfun (class-copy-ivar-list "class_copyIvarList" :library foundation)
-    (:pointer objc-ivar)
-  (cls objc-class)
-  (out-count (:pointer :uint)))
-
-(defcfun (class-get-ivar-layout "class_getIvarLayout" :library foundation)
-    (:pointer :uint8)
-  (cls objc-class))
-
-(defcfun (class-set-ivar-layout "class_setIvarLayout" :library foundation)
-    :void
-  (cls objc-class)
-  (layout (:pointer :uint8)))
-
-(defcfun (class-get-weak-ivar-layout "class_getWeakIvarLayout" :library foundation)
-    (:pointer :uint8)
-  (cls objc-class))
-
-(defcfun (class-set-weak-ivar-layout "class_setWeakIvarLayout" :library foundation)
-    :void
-  (cls objc-class)
-  (layout (:pointer :uint8)))
-
-(defcfun (class-get-property "class_getProperty" :library foundation)
-    objc-property
-  (cls objc-class)
-  (name :string))
-
-(defcfun (class-copy-property-list "class_copyPropertyList" :library foundation)
-    :pointer
-  (cls objc-class)
-  (out-count (:pointer :uint)))
-
-(defcfun (class-add-method "class_addMethod" :library foundation)
-    :boolean
-  (cls objc-class)
-  (name selector)
-  (imp objc-imp)
-  (types :string))
-
-(defcfun (class-get-instance-method "class_getInstanceMethod" :library foundation)
-    objc-method
-  (cls objc-class)
-  (name selector))
-
-(defcfun (class-get-class-method "class_getClassMethod" :library foundation)
-    objc-method
-  (cls objc-class)
-  (name selector))
-
-(defcfun (class-copy-method-list "class_copyMethodList" :library foundation)
-    :pointer
-  (cls objc-class)
-  (out-count (:pointer :uint)))
-
-(defcfun (class-replace-method "class_replaceMethod" :library foundation)
-    objc-imp
-  (cls objc-class)
-  (name selector)
-  (imp objc-imp)
-  (types :string))
-
-(defcfun (class-get-method-implementation "class_getMethodImplementation" :library foundation)
-    ;; WTF is the class_getMethodImplementation_stret ?
-    objc-imp
-  (cls objc-class)
-  (name selector))
-
-(defcfun (class-responds-to-selector "class_respondsToSelector" :library foundation)
-    :boolean
-  (cls objc-class)
-  (selector selector))
-
-(defcfun (class-add-property "class_addProperty" :library foundation)
-    :pointer
-  (cls objc-class)
-  (name :string)
-  (attributes (:pointer (:struct objc-property-attribute)))
-  (attribute-count :unsigned-int))
-
-(defcfun (class-replace-property "class_replaceProperty" :library foundation)
-    :void
-  (cls objc-class)
-  (name :string)
-  (attributes (:pointer (:struct objc-property-attribute)))
-  (attribute-count :unsigned-int))
-
-(defcfun (class-get-version "class_getVersion" :library foundation)
-    :int
-  (cls objc-class))
-
-(defcfun (class-set-version "class_setVersion" :library foundation)
-    :void
-  (cls objc-class)
-  (version :int))
-
-(defcfun (class-create-instance "class_createInstance" :library foundation)
-    objc-id
-  (cls objc-class)
-  (extra-bytes :uint))
-
-
-(defcfun (objc-allocate-class-pair "objc_allocateClassPair" :library foundation)
-    objc-class
-  (superclass objc-class)
-  (name :string)
-  (extra-bytes :uint))
-
-(defcfun (objc-dispose-class-pair "objc_disposeClassPair" :library foundation)
-    :void
-  (cls objc-class))
-
-(defcfun (objc-register-class-pair "objc_registerClassPair" :library foundation)
-    :void
-  (cls objc-class))
-
-(defcfun (objc-duplicate-class-pair "objc_duplicateClassPair" :library foundation)
-    objc-class
-  (original objc-class)
-  (name :string)
-  (extra-bytes :uint))
-
-(defcfun (object-get-indexed-ivar "object_getIndexedIvars" :library foundation)
-    :void
-  (obj objc-id))
-
-(defcfun (object-get-ivar "object_getIvar" :library foundation)
-    objc-id
-  (obj objc-id)
-  (ivar objc-ivar))
-
-(defcfun (object-set-ivar "object_setIvar" :library foundation)
-    :void
-  (obj objc-id)
-  (ivar objc-ivar)
-  (value objc-id))
-
-(defcfun (object-get-class-name "object_getClassName" :library foundation)
-    :string
-  (obj objc-id))
-
-(defcfun (object-get-class "object_getClass" :library foundation)
-    objc-class
-  (obj objc-id))
-
-(defcfun (object-set-class "object_setClass" :library foundation)
-    objc-class
-  (obj objc-id)
-  (cls objc-class))
-
-(defcfun (objc-copy-class-list "objc_copyClassList" :library foundation)
-    objc-class
-  (out-count (:pointer :uint)))
-
-(defcfun (objc-lookup-class "objc_lookUpClass" :library foundation)
-    objc-class
-  (name :string))
-
-(defcfun (objc-get-class "objc_getClass" :library foundation)
-    objc-id
-  (name :string))
-
-(defcfun (objc-get-required-class "objc_getRequiredClass" :library foundation)
-    objc-class
-  (name :string))
-
-(defcfun (objc-get-meta-class "objc_getMetaClass" :library foundation)
-    objc-class
-  (name :string))
-
-
-(defcfun (ivar-get-name "ivar_getName" :library foundation)
-    :string
-  (var objc-ivar))
-
-(defcfun (ivar-get-type-encoding "ivar_getTypeEncoding" :library foundation)
-    :string
-  (var objc-ivar))
-
-(defcfun (ivar-get-offset "ivar_getOffset" :library foundation)
-    :pointer
-  (var objc-ivar))
-
-;; objc_setAssociatedObject
-;; objc_getAssociatedObject
-;; objc_removeAssociatedObjects
-
-(defcfun (method-get-name "method_getName" :library foundation)
-    selector
-  (method objc-method))
-
-(defcfun (method-get-implementation "method_getImplementation" :library foundation)
-    objc-imp
-  (method objc-method))
-
-(defcfun (method-get-type-encoding "method_getTypeEncoding" :library foundation)
-    :string
-  (method objc-method))
-
-(defcfun (method-copy-return-type "method_copyReturnType" :library foundation)
-    :string
-  (method objc-method))
-
-(defcfun (method-copy-argument-type "method_copyArgumentType" :library foundation)
-    :string
-  (method objc-method)
-  (index :uint))
-
-;; method_getReturnType
-
-(defcfun (method-get-number-of-arguments "method_getNumberOfArguments" :library foundation)
-    :uint
-  (method objc-method))
-
-;; method_getArgumentType
-;; method_getDescription
-
-(defcfun (method-set-implementation "method_setImplementation" :library foundation)
-    objc-imp
-  (method objc-method)
-  (imp objc-imp))
-
-(defcfun (method-exchange-implementation "method_exchangeImplementation" :library foundation)
-    :void
-  (method1 objc-method)
-  (method2 objc-method))
-
-;; objc_copyImageNames
-;; class_getImageName
-;; objc_copyClassNamesForImage
-
-(defcfun (sel-get-name "sel_getName" :library foundation)
-    :string
-  (sel selector))
-
-(defcfun (sel-register-name "sel_registerName" :library foundation)
-    selector
-  (name :string))
-
-(defcfun (sel-get-uid "sel_getUid" :library foundation)
-    selector
-  (str :string))
-
-;; sel_isEqual
-
-(defcfun (property-get-name "property_getName" :library foundation)
-    :string
-  (prop objc-property))
-
-(defcfun (property-copy-attribute-value "property_copyAttributeValue" :library foundation)
-    :string
-  (prop objc-property)
-  (name :string))
-
-(defcfun (property-get-attributes "property_getAttributes" :library foundation)
-    :string
-  (prop objc-property))
-
-(defcfun (property-copy-attribute-list "property_copyAttributeList" :library foundation)
-    (:pointer (:struct objc-property-attribute))
-  (prop objc-property)
-  (out-count (:pointer :uint)))
-
-(defcfun (objc-msg-send "objc_msgSend" :library foundation)
-    :pointer
-  (instance objc-id)
-  (selector selector)
-  &rest)
-
-(defcfun (method-invoke "method_invoke" :library foundation)
-    :pointer
-  (object objc-id)
-  (method objc-method)
-  &rest)
-
-;; Utils
-
-(defmacro cls (name)
-  (typecase name
-    (string `(objc-lookup-class ,name))
-    (symbol (let ((real-sym (intern (symbol-name name) "OBJC-CLASS")))
-              (export real-sym "OBJC-CLASS")
-              `(ensure-objc-class ',real-sym)))
-    (t `(ensure-objc-class ,name))))
-
-(defmacro meta (name)
-  (typecase name
-    (string `(objc-get-meta-class ,name))
-    (symbol (let ((real-sym (intern (symbol-name name) "OBJC-META")))
-              (export real-sym "OBJC-META")
-              `(ensure-objc-meta-class ',real-sym)))
-    (t `(ensure-objc-meta-class ,name))))
-
-(defun selector (object)
-  (cond ((symbolp object)  (make-instance
-                            'selector
-                            :name (translate-name-to-foreign object (find-package "OBJC"))))
-        ((stringp object)  (make-instance 'selector :name object))
-        ((pointerp object) (make-instance 'selector :objc-object object))
-        (t (error "Wrong type of object for selector: ~A" object))))
-
-(defmacro sel (name)
-  (let ((name (if (symbolp name)
-                  (translate-name-to-foreign name (find-package "OBJC"))
-                  name)))
-    `(selector ,name)))
+;;; FIXME: Redefining old method will not flush some method cache at the Lisp side
+
+  (defmacro define-objc-method (name-and-options return-type args &body body)
+    (multiple-value-bind (body decls)
+        (alexandria:parse-body body)
+      (let (lisp-name
+            selector-name
+            arg-and-types)
+        (if (listp name-and-options)
+            (setq lisp-name (first name-and-options)
+                  selector-name (second name-and-options))
+            (setq lisp-name name-and-options
+                  selector-name (translate-name-to-foreign lisp-name (find-package "OBJC"))))
+        (setq arg-and-types (append (list (first args)) '((_cmd selector)) (rest args)))
+        (let* ((objc-arg-types (let ((types (make-array (1+ (length arg-and-types)) :element-type 'character :fill-pointer 0)))
+                                 (vector-push (parse-c-type-to-objc-encoding return-type) types)
+                                 (dolist (arg arg-and-types)
+                                   (vector-push (parse-c-type-to-objc-encoding (second arg)) types))
+                                 types))
+               (c-arg-types (loop for arg in arg-and-types
+                                  collect (list (first arg) (parse-lisp-type-to-c (second arg)))))
+               (class-name (ensure-objc-class (second (first args))))
+               (class-obj (objc-obj class-name)))
+          `(let ((sel (make-instance 'selector :name ,selector-name)))
+             (defcallback ,lisp-name ,return-type ,c-arg-types
+               ,(if decls (append decls '((ignorable _cmd)))
+                    '(declare (ignorable _cmd)))
+               ,@body)
+             (objc-raw::class-replace-method ,class-obj (objc-obj sel) (callback ,lisp-name) ,objc-arg-types)
+             (ensure-objc-method ,class-name (objc-raw::class-get-instance-method ,class-obj (objc-obj sel))))))))
 
 
-;; Structures
-;; NSRange
+;;;; Obj-C Runtime
 
-(defcstruct (_-ns-range :class ns-range-tclass)
-  (location :ulong)
-  (length :ulong))
+;;; Other Obj-C Runtime Types
 
-(defmethod translate-from-foreign :around (ptr (type ns-range-tclass))
-  (let ((plist (call-next-method)))
-    (cons (getf plist 'location) (getf plist 'length))))
-(defmethod translate-into-foreign-memory :around (value (type ns-range-tclass) ptr)
-  (call-next-method (list 'location (car value) 'length (cdr value)) type ptr))
+  (defctype objc-ivar :pointer)
+  (defctype objc-property :pointer)
+  (defctype objc-imp :pointer) ;; void (*)(void) IMP (self, selector, ...)
 
-(defctype ns-range _-ns-range)
+  (defcstruct objc-method-description
+    (:name :string)
+    (:types :string))
 
-;; Point, Size, Rect
+;;; Basic Obj-C Runtime functions
 
-(defcstruct (cg-point :class cg-point-tclass)
-  (x :double)
-  (y :double))
+  (defcfun (class-get-name "class_getName" :library foundation)
+      :string
+    (cls objc-class))
 
-(defcstruct (cg-size :class cg-size-tclass)
-  (width :double)
-  (height :double))
+  (defcfun (class-get-superclass "class_getSuperclass" :library foundation)
+      :pointer
+    (cls objc-class))
 
-(defcstruct (cg-rect :class cg-rect-tclass)
-  (origin (:struct cg-point))
-  (size (:struct cg-size)))
+  (defcfun (class-is-meta-class "class_isMetaClass" :library foundation)
+      :boolean
+    (cls objc-class))
 
-;; Fucking by-value hack
-(defcstruct (_cg-rect :class _cg-rect-tclass)
-  (x :double)
-  (y :double)
-  (w :double)
-  (h :double))
+  (defcfun (objc-get-instance-size "class_getInstanceSize" :library foundation)
+      :unsigned-int
+    (cls objc-class))
 
-(defmethod translate-from-foreign :around (ptr (type cg-point-tclass))
-  (let ((plist (call-next-method)))
-    (vector (getf plist 'x) (getf plist 'y))))
-(defmethod translate-into-foreign-memory ((value vector) (type cg-point-tclass) ptr)
-  (translate-into-foreign-memory
-   (list 'x (aref value 0) 'y (aref value 1))
-   type ptr))
+  (defcfun (class-get-instance-variable "class_getInstanceVariable" :library foundation)
+      objc-ivar
+    (cls objc-class)
+    (name :string))
 
-(defmethod translate-from-foreign :around (ptr (type cg-size-tclass))
-  (let ((plist (call-next-method)))
-    (vector (getf plist 'width) (getf plist 'height))))
-(defmethod translate-into-foreign-memory ((value vector) (type cg-size-tclass) ptr)
-  (translate-into-foreign-memory
-   (list 'width (aref value 0) 'height (aref value 1))
-   type ptr))
+  (defcfun (class-get-class-variable "class_getClassVariable" :library foundation)
+      objc-ivar
+    (cls objc-class)
+    (name :string))
 
-(defmethod translate-from-foreign (ptr (type cg-rect-tclass))
-  (let ((plist (call-next-method)))
-    (with-foreign-slots ((x y) (getf plist 'origin) (:struct cg-point))
-      (with-foreign-slots ((width height) (getf plist 'size) (:struct cg-size))
-        (vector x y width height)))))
+  (defcfun (class-add-ivar "class_addIvar" :library foundation)
+      :boolean
+    (class :pointer)
+    (name :string)
+    (size :ulong)
+    (alignment :uint8)
+    (types :string))
 
-(defmethod translate-into-foreign-memory ((value vector) (type cg-rect-tclass) ptr)
-  (translate-into-foreign-memory
-   (list 'origin (list 'x (aref value 0) 'y (aref value 1))
-         'size (list 'width (aref value 2) 'height (aref value 3)))
-   type ptr)
-  ;; (with-foreign-slots ((x y w h) ptr (:struct _cg-rect))
-  ;;   (setf x (float (aref value 0) 0d0)
-  ;;         y (float (aref value 1) 0d0)
-  ;;         w (float (aref value 2) 0d0)
-  ;;         h (float (aref value 3) 0d0)))
+  (defcfun (class-copy-ivar-list "class_copyIvarList" :library foundation)
+      (:pointer objc-ivar)
+    (cls objc-class)
+    (out-count (:pointer :uint)))
+
+  (defcfun (class-get-ivar-layout "class_getIvarLayout" :library foundation)
+      (:pointer :uint8)
+    (cls objc-class))
+
+  (defcfun (class-set-ivar-layout "class_setIvarLayout" :library foundation)
+      :void
+    (cls objc-class)
+    (layout (:pointer :uint8)))
+
+  (defcfun (class-get-weak-ivar-layout "class_getWeakIvarLayout" :library foundation)
+      (:pointer :uint8)
+    (cls objc-class))
+
+  (defcfun (class-set-weak-ivar-layout "class_setWeakIvarLayout" :library foundation)
+      :void
+    (cls objc-class)
+    (layout (:pointer :uint8)))
+
+  (defcfun (class-get-property "class_getProperty" :library foundation)
+      objc-property
+    (cls objc-class)
+    (name :string))
+
+  (defcfun (class-copy-property-list "class_copyPropertyList" :library foundation)
+      :pointer
+    (cls objc-class)
+    (out-count (:pointer :uint)))
+
+  (defcfun (class-add-method "class_addMethod" :library foundation)
+      :boolean
+    (cls objc-class)
+    (name selector)
+    (imp objc-imp)
+    (types :string))
+
+  (defcfun (class-get-instance-method "class_getInstanceMethod" :library foundation)
+      objc-method
+    (cls objc-class)
+    (name selector))
+
+  (defcfun (class-get-class-method "class_getClassMethod" :library foundation)
+      objc-method
+    (cls objc-class)
+    (name selector))
+
+  (defcfun (class-copy-method-list "class_copyMethodList" :library foundation)
+      :pointer
+    (cls objc-class)
+    (out-count (:pointer :uint)))
+
+  (defcfun (class-replace-method "class_replaceMethod" :library foundation)
+      objc-imp
+    (cls objc-class)
+    (name selector)
+    (imp objc-imp)
+    (types :string))
+
+  (defcfun (class-get-method-implementation "class_getMethodImplementation" :library foundation)
+      ;; WTF is the class_getMethodImplementation_stret ?
+      objc-imp
+    (cls objc-class)
+    (name selector))
+
+  (defcfun (class-responds-to-selector "class_respondsToSelector" :library foundation)
+      :boolean
+    (cls objc-class)
+    (selector selector))
+
+  (defcfun (class-add-property "class_addProperty" :library foundation)
+      :pointer
+    (cls objc-class)
+    (name :string)
+    (attributes (:pointer (:struct objc-property-attribute)))
+    (attribute-count :unsigned-int))
+
+  (defcfun (class-replace-property "class_replaceProperty" :library foundation)
+      :void
+    (cls objc-class)
+    (name :string)
+    (attributes (:pointer (:struct objc-property-attribute)))
+    (attribute-count :unsigned-int))
+
+  (defcfun (class-get-version "class_getVersion" :library foundation)
+      :int
+    (cls objc-class))
+
+  (defcfun (class-set-version "class_setVersion" :library foundation)
+      :void
+    (cls objc-class)
+    (version :int))
+
+  (defcfun (class-create-instance "class_createInstance" :library foundation)
+      objc-id
+    (cls objc-class)
+    (extra-bytes :uint))
+
+
+  (defcfun (objc-allocate-class-pair "objc_allocateClassPair" :library foundation)
+      objc-class
+    (superclass objc-class)
+    (name :string)
+    (extra-bytes :uint))
+
+  (defcfun (objc-dispose-class-pair "objc_disposeClassPair" :library foundation)
+      :void
+    (cls objc-class))
+
+  (defcfun (objc-register-class-pair "objc_registerClassPair" :library foundation)
+      :void
+    (cls objc-class))
+
+  (defcfun (objc-duplicate-class-pair "objc_duplicateClassPair" :library foundation)
+      objc-class
+    (original objc-class)
+    (name :string)
+    (extra-bytes :uint))
+
+  (defcfun (object-get-indexed-ivar "object_getIndexedIvars" :library foundation)
+      :void
+    (obj objc-id))
+
+  (defcfun (object-get-ivar "object_getIvar" :library foundation)
+      objc-id
+    (obj objc-id)
+    (ivar objc-ivar))
+
+  (defcfun (object-set-ivar "object_setIvar" :library foundation)
+      :void
+    (obj objc-id)
+    (ivar objc-ivar)
+    (value objc-id))
+
+  (defcfun (object-get-class-name "object_getClassName" :library foundation)
+      :string
+    (obj objc-id))
+
+  (defcfun (object-get-class "object_getClass" :library foundation)
+      objc-class
+    (obj objc-id))
+
+  (defcfun (object-set-class "object_setClass" :library foundation)
+      objc-class
+    (obj objc-id)
+    (cls objc-class))
+
+  (defcfun (objc-copy-class-list "objc_copyClassList" :library foundation)
+      objc-class
+    (out-count (:pointer :uint)))
+
+  (defcfun (objc-lookup-class "objc_lookUpClass" :library foundation)
+      objc-class
+    (name :string))
+
+  (defcfun (objc-get-class "objc_getClass" :library foundation)
+      objc-id
+    (name :string))
+
+  (defcfun (objc-get-required-class "objc_getRequiredClass" :library foundation)
+      objc-class
+    (name :string))
+
+  (defcfun (objc-get-meta-class "objc_getMetaClass" :library foundation)
+      objc-class
+    (name :string))
+
+
+  (defcfun (ivar-get-name "ivar_getName" :library foundation)
+      :string
+    (var objc-ivar))
+
+  (defcfun (ivar-get-type-encoding "ivar_getTypeEncoding" :library foundation)
+      :string
+    (var objc-ivar))
+
+  (defcfun (ivar-get-offset "ivar_getOffset" :library foundation)
+      :pointer
+    (var objc-ivar))
+
+  ;; objc_setAssociatedObject
+  ;; objc_getAssociatedObject
+  ;; objc_removeAssociatedObjects
+
+  (defcfun (method-get-name "method_getName" :library foundation)
+      selector
+    (method objc-method))
+
+  (defcfun (method-get-implementation "method_getImplementation" :library foundation)
+      objc-imp
+    (method objc-method))
+
+  (defcfun (method-get-type-encoding "method_getTypeEncoding" :library foundation)
+      :string
+    (method objc-method))
+
+  (defcfun (method-copy-return-type "method_copyReturnType" :library foundation)
+      :string
+    (method objc-method))
+
+  (defcfun (method-copy-argument-type "method_copyArgumentType" :library foundation)
+      :string
+    (method objc-method)
+    (index :uint))
+
+  ;; method_getReturnType
+
+  (defcfun (method-get-number-of-arguments "method_getNumberOfArguments" :library foundation)
+      :uint
+    (method objc-method))
+
+  ;; method_getArgumentType
+  ;; method_getDescription
+
+  (defcfun (method-set-implementation "method_setImplementation" :library foundation)
+      objc-imp
+    (method objc-method)
+    (imp objc-imp))
+
+  (defcfun (method-exchange-implementation "method_exchangeImplementation" :library foundation)
+      :void
+    (method1 objc-method)
+    (method2 objc-method))
+
+  ;; objc_copyImageNames
+  ;; class_getImageName
+  ;; objc_copyClassNamesForImage
+
+  (defcfun (sel-get-name "sel_getName" :library foundation)
+      :string
+    (sel selector))
+
+  (defcfun (sel-register-name "sel_registerName" :library foundation)
+      selector
+    (name :string))
+
+  (defcfun (sel-get-uid "sel_getUid" :library foundation)
+      selector
+    (str :string))
+
+  ;; sel_isEqual
+
+  (defcfun (property-get-name "property_getName" :library foundation)
+      :string
+    (prop objc-property))
+
+  (defcfun (property-copy-attribute-value "property_copyAttributeValue" :library foundation)
+      :string
+    (prop objc-property)
+    (name :string))
+
+  (defcfun (property-get-attributes "property_getAttributes" :library foundation)
+      :string
+    (prop objc-property))
+
+  (defcfun (property-copy-attribute-list "property_copyAttributeList" :library foundation)
+      (:pointer (:struct objc-property-attribute))
+    (prop objc-property)
+    (out-count (:pointer :uint)))
+
+  (defcfun (objc-msg-send "objc_msgSend" :library foundation)
+      :pointer
+    (instance objc-id)
+    (selector selector)
+    &rest)
+
+  (defcfun (method-invoke "method_invoke" :library foundation)
+      :pointer
+    (object objc-id)
+    (method objc-method)
+    &rest)
+
+
+;;;; Utils
+
+  (defmacro cls (name)
+    (typecase name
+      (string `(objc-lookup-class ,name))
+      (symbol (let ((real-sym (intern (symbol-name name) "OBJC-CLASS")))
+                (export real-sym "OBJC-CLASS")
+                `(ensure-objc-class ',real-sym)))
+      (t `(ensure-objc-class ,name))))
+
+  (defmacro meta (name)
+    (typecase name
+      (string `(objc-get-meta-class ,name))
+      (symbol (let ((real-sym (intern (symbol-name name) "OBJC-META")))
+                (export real-sym "OBJC-META")
+                `(ensure-objc-meta-class ',real-sym)))
+      (t `(ensure-objc-meta-class ,name))))
+
+  (defun selector (object)
+    (cond ((symbolp object)  (make-instance
+                              'selector
+                              :name (translate-name-to-foreign object (find-package "OBJC"))))
+          ((stringp object)  (make-instance 'selector :name object))
+          ((pointerp object) (make-instance 'selector :objc-object object))
+          (t (error "Wrong type of object for selector: ~A" object))))
+
+  (defmacro sel (name)
+    (let ((name (if (symbolp name)
+                    (translate-name-to-foreign name (find-package "OBJC"))
+                    name)))
+      `(selector ,name)))
+
+
+;;;; Structures
+
+;;; NSRange
+
+  (defcstruct (_-ns-range :class ns-range-tclass)
+    (location :ulong)
+    (length :ulong))
+
+  (defmethod translate-from-foreign :around (ptr (type ns-range-tclass))
+    (let ((plist (call-next-method)))
+      (cons (getf plist 'location) (getf plist 'length))))
+  (defmethod translate-into-foreign-memory :around (value (type ns-range-tclass) ptr)
+    (call-next-method (list 'location (car value) 'length (cdr value)) type ptr))
+
+  (defctype ns-range (:struct _-ns-range))
+
+;;; Point, Size, Rect
+
+  (defcstruct (cg-point :class cg-point-tclass)
+    (:x :double)
+    (:y :double))
+
+  (defcstruct (cg-size :class cg-size-tclass)
+    (:width :double)
+    (:height :double))
+
+  (defcstruct (cg-rect :class cg-rect-tclass)
+    (:origin (:struct cg-point))
+    (:size (:struct cg-size)))
+
+  (defmethod translate-from-foreign :around (ptr (type cg-point-tclass))
+    (let ((plist (call-next-method)))
+      (vector (getf plist :x) (getf plist :y))))
+
+  (defmethod translate-into-foreign-memory ((value vector) (type cg-point-tclass) ptr)
+    (translate-into-foreign-memory
+     (list :x (aref value 0) :y (aref value 1))
+     type ptr))
+
+  (defmethod translate-into-foreign-memory ((value list) (type cg-point-tclass) ptr)
+    (setf (getf value :x) (float (getf value :x) 0d0)
+          (getf value :y) (float (getf value :y) 0d0))
+    (call-next-method value type ptr))
+
+  (defmethod translate-from-foreign :around (ptr (type cg-size-tclass))
+    (let ((plist (call-next-method)))
+      (vector (getf plist :width) (getf plist :height))))
+
+  (defmethod translate-into-foreign-memory ((value vector) (type cg-size-tclass) ptr)
+    (translate-into-foreign-memory
+     (list :width (aref value 0) :height (aref value 1))
+     type ptr))
+
+  (defmethod translate-into-foreign-memory ((value list) (type cg-size-tclass) ptr)
+    (setf (getf value :width) (float (getf value :width) 0d0)
+          (getf value :height) (float (getf value :height) 0d0))
+    (call-next-method value type ptr))
+
+  (defmethod translate-from-foreign (ptr (type cg-rect-tclass))
+    (let ((plist (call-next-method)))
+      (vector (foreign-slot-value (getf plist :origin) '(:struct cg-point) :x)
+              (foreign-slot-value (getf plist :origin) '(:struct cg-point) :y)
+              (foreign-slot-value (getf plist :size) '(:struct cg-size) :width)
+              (foreign-slot-value (getf plist :size) '(:struct cg-size) :height))))
+
+  (defmethod translate-into-foreign-memory ((value vector) (type cg-rect-tclass) ptr)
+    (translate-into-foreign-memory
+     (list :origin (list :x (aref value 0) :y (aref value 1))
+           :size (list :width (aref value 2) :height (aref value 3)))
+     type ptr))
+
+  (defmethod translate-into-foreign-memory ((value list) (type cg-rect-tclass) ptr)
+    (if (= (length value) 8)
+        (call-next-method
+         (list :origin (list :x (float (getf value :x 0d0) 0d0) :y (float (getf value :y 0d0) 0d0))
+               :size (list :width (float (getf value :width 0d0) 0d0) :height (float (getf value :height 0d0) 0d0)))
+         type ptr)
+        (call-next-method
+         (list :origin (list :x (float (getf (getf value :origin) :x 0d0) 0d0) :y (float (getf (getf value :origin) :y 0d0) 0d0))
+               :size (list :width (float (getf (getf value :size) :width 0d0) 0d0) :height (float (getf (getf value :size) :height 0d0) 0d0)))
+         type ptr)))
+
+  (defctype ns-point (:struct cg-point))
+  (defctype ns-point-pointer (:pointer ns-point))
+  (defctype ns-size (:struct cg-size))
+  (defctype ns-size-pointer (:pointer ns-size))
+  (defctype ns-rect (:struct cg-rect))
+  (defctype ns-rect-pointer (:pointer (:struct cg-rect)))
+
+  (defcfun (ns-equal-rects "NSEqualRects" :library foundation)
+      :bool
+    (a-rect ns-rect)
+    (b-rect ns-rect))
+
+  (c2mop:finalize-inheritance (find-class 'objc-method))
   )
 
-;; (defmethod translate-into-foreign-memory :around (value (type _cg-rect-tclass) ptr)
-;;   (call-next-method
-;;    (list 'x (float (aref value 0) 0d0)
-;;          'y (float (aref value 1) 0d0)
-;;          'w (float (aref value 2) 0d0)
-;;          'h (float (aref value 3) 0d0))
-;;    type
-;;    ptr))
-
-;; Test availability
-
-;; (let ((ptr (foreign-alloc 'cg-rect)))
-;;   (with-foreign-slots ((x y w h) ptr (:struct _cg-rect))
-;;     (setf x 1d0
-;;           y 2d0
-;;           w 3d0
-;;           h 4d0))
-;;   (with-foreign-slots ((origin size) ptr (:struct cg-rect))
-;;     (list origin size))) ; => (#(1.0d0 2.0d0) #(3.0d0 4.0d0))
-
-(defctype ns-point (:struct cg-point))
-(defctype ns-point-pointer (:pointer ns-point))
-(defctype ns-size (:struct cg-size))
-(defctype ns-size-pointer (:pointer ns-size))
-(defctype ns-rect (:struct cg-rect))
-(defctype ns-rect-pointer (:pointer (:struct cg-rect)))
-
-;; Final setting for compile-time availability
-
-(c2mop:finalize-inheritance (find-class 'objc-method))
-
-;; --- From now on the basic runtime is ready ---
+;;; --- From now on the basic runtime is ready ---
 
 ;; Obj-C Protocol
-
-;;; Lisp class
-
-(unless (find-class 'objc-class:ns-object nil)
-  (defclass objc-class:ns-object () () (:metaclass objc-class)))
-
-(unless (find-class 'objc-class:protocol nil)
-  (defclass objc-class:protocol  () () (:metaclass objc-class)))
-
-(defmethod print-object ((obj objc-class::protocol) stream)
-  (print-unreadable-object (obj stream :type t :identity t)
-    (princ (protocol-get-name obj) stream)))
 
 ;;; Foreign type
 (define-foreign-type objc-protocol-type () ()
@@ -1344,10 +1393,13 @@ attributes ::= {:return-type  ret-type} | ; T
       (make-instance 'objc-class::protocol :objc-object ptr)))
 (defmethod translate-to-foreign (obj (type objc-protocol-type))
   (objc-obj obj))
+
 (defmethod expand-from-foreign (ptr (type objc-protocol-type))
-  `(if (null-pointer-p ,ptr)
-       (error "Obj-C protocol not found.")
-       (make-instance 'objc-class::protocol :objc-object ,ptr)))
+  (alexandria:with-unique-names (ptr-var)
+    `(let ((,ptr-var ,ptr))
+       (if (null-pointer-p ,ptr-var)
+           (error "Obj-C protocol not found.")
+           (make-instance 'objc-class::protocol :objc-object ,ptr-var)))))
 (defmethod expand-to-foreign (obj (type objc-protocol-type))
   `(objc-obj ,obj))
 
@@ -1453,18 +1505,31 @@ attributes ::= {:return-type  ret-type} | ; T
   (protocol objc-protocol)
   (other objc-protocol))
 
+;;; Lisp class
+
+(defclass objc-meta:protocol () () (:metaclass objc-metaclass))
+
+(defmethod print-object ((obj objc-meta:protocol) stream)
+  (print-unreadable-object (obj stream :type t :identity t)
+    (princ (protocol-get-name obj) stream)))
+
 
 ;; Basic Obj-C objects
 
-;; Note that the `ensure-object-class' is not ready at compile time,
-;; at least in SBCL.
-(eval-when (:load-toplevel :execute)
-  (dolist (name '("NSNumber" "NSValue"
-                  "NSString" "NSMutableString" "NSArray" "NSMutableArray"
-                  "NSSet" "NSMutableSet" "NSDictionary" "NSMutableDictionary"))
-    (ensure-objc-class name)))
+;; This is one way to define Obj-C Classes
+(defclass objc-meta:ns-number () () (:metaclass objc-metaclass))
+(defclass objc-meta:ns-string () () (:metaclass objc-metaclass))
+(defclass objc-class:ns-number () () (:metaclass objc-class))
+(defclass objc-class:ns-value () () (:metaclass objc-class))
+(defclass objc-class:ns-string () () (:metaclass objc-class))
+(defclass objc-class:ns-array () () (:metaclass objc-class))
+(defclass objc-class:ns-set () () (:metaclass objc-class))
+(defclass objc-class:ns-dictionary () () (:metaclass objc-class))
+(defclass objc-class:ns-mutable-array () () (:metaclass objc-class))
+(defclass objc-class:ns-mutable-set () () (:metaclass objc-class))
+(defclass objc-class:ns-mutable-dictionary () () (:metaclass objc-class))
 
-(defmethod translate-from-objc-id ((class objc-meta::ns-number) ptr)
+(defmethod translate-from-objc-id ((class objc-meta:ns-number) ptr)
   (foreign-funcall "objc_msgSend"
                    :pointer ptr
                    selector (sel "doubleValue")
@@ -1488,7 +1553,7 @@ attributes ::= {:return-type  ret-type} | ; T
                    :double number
                    :pointer))
 
-(defmethod translate-from-objc-id ((class objc-meta::ns-string) ptr)
+(defmethod translate-from-objc-id ((class objc-meta:ns-string) ptr)
   (foreign-funcall "objc_msgSend"
                    :pointer ptr
                    selector (sel "UTF8String")
@@ -1501,8 +1566,7 @@ attributes ::= {:return-type  ret-type} | ; T
                    :pointer))
 
 
-
-;; Utils like LispWorks Obj-C bridge
+;;;; Utils like LispWorks Obj-C bridge
 
 (defun alloc-init-object (class)
   (when (stringp class)
@@ -1535,9 +1599,10 @@ attributes ::= {:return-type  ret-type} | ; T
   (funcall (sel string-with-utf8-string.) (cls ns-string) string))
 
 
-;; Fancy time...
+;;;; Fancy time...
 
-(eval-when (:load-toplevel :execute)
+;; This is another way to define Obj-C Classes
+(eval-when (:compile-toplevel :load-toplevel :execute)
   (dolist (name '("NSApplication" "NSWorkspace" "NSPasteboard" "NSPasteboardItem"
                   "NSDocument" "NSDocumentController" "NSPersistentDocument"
                   "NSUserDefaultsController"
@@ -1548,7 +1613,8 @@ attributes ::= {:return-type  ret-type} | ; T
                   "NSSplitView" "NSStackView" "NSTabView"
                   "NSScrollView" "NSScroller" "NSClipView" "NSRulerView" "NSRulerMarker"
 
-                  "NSWindow"))
+                  "NSWindow"
+                  "NSAutoreleasePool"))
     (ensure-objc-class name)))
 
 ;; Example: to get the system pasteboard
@@ -1591,42 +1657,48 @@ attributes ::= {:return-type  ret-type} | ; T
   objc-id)
 
 (defcenum ns-window-style-mask
-  :borderless
-  :titled
-  :closable
-  :miniaturizable
-  :resizable
-  :textured-background
-  :unified-title-and-toolbar
-  :full-screen
-  :full-size-content-view
-  :utility-window
-  :doc-modal-window
-  :nonactivating-panel
-  :hud-window)
+  (:borderless 0)
+  (:titled 1)
+  (:closable 2)
+  (:miniaturizable 4)
+  (:resizable 8)
+  (:textured-background 16)
+  (:unified-title-and-toolbar 32)
+  (:full-screen 64)
+  (:full-size-content-view 128)
+  (:utility-window 256)
+  (:doc-modal-window 512)
+  (:nonactivating-panel 1024)
+  (:hud-window 2048))
 
 (defcenum ns-backing-store
   :retained
   :non-retained
-  :store-buffered)
+  :buffered)
 
 (defcenum ns-pasteboard-reading-options :data :string :property-list :keyed-archive)
 
-;; This cannot be done because there's problem in by-value passing NSRect structure
+(defun main ()
+  (trivial-main-thread:with-body-in-main-thread (:blocking t)
+    (float-features:with-float-traps-masked t
+      (let ((pool (objc-method:new (cls ns-autorelease-pool)))
+            (app (objc-method:shared-application (cls objc-class:ns-application)))
+            (window (objc-method:alloc (cls ns-window)))
+            (rect #(100 100 300 300)))
+        (objc-method:init-with-content-rect.style-mask.backing.defer.
+         window rect
+         (logior (foreign-enum-value 'ns-window-style-mask :titled)
+                 (foreign-enum-value 'ns-window-style-mask :closable)
+                 (foreign-enum-value 'ns-window-style-mask :miniaturizable)
+                 (foreign-enum-value 'ns-window-style-mask :resizable))
+         (foreign-enum-value 'ns-backing-store :buffered)
+         0)
+        (objc-method:set-is-visible. window 1)
+        (objc-method:autorelease window)
+        (objc-method:order-front-regardless window)
+        (objc-method:run app)
+        (objc-method:drain pool)))))
 
-;; (let ((app (objc-method:shared-application (cls objc-class:ns-application)))
-;;       (window (objc-method:alloc (cls ns-window)))
-;;       (rect #(100d0 100d0 300d0 300d0)))
-;;   (foreign-funcall
-;;    "objc_msgSend"
-;;    :pointer (objc-obj window)
-;;    (:struct cg-rect) rect
-;;    :int (foreign-enum-value 'ns-window-style-mask :titled)
-;;    :int (foreign-enum-value 'ns-backing-store :store-buffered)
-;;    :bool nil
-;;    :pointer))
+(export 'main)
 
-;; TODO:
-;; - Parse type encoding for array, structure, union, bits
-;; - Helper function & reader for Class, SEL, NSString, NSNumber...
-;; - Wrapper for NSPoint, NSSize, NSRect...
+;; (main)
