@@ -23,12 +23,13 @@ To get a Obj-C class, either pass its string name or the Lisp name it should be 
 
 #+begin_src common-lisp
   (objc:cls ns-object)
-  or
+  ;; or
   (objc:ensure-objc-class 'objc-class::ns-object)
+  ;; or
   (objc:ensure-objc-class "NSObject")
-  or
+  ;; or
   (objc:objc-lookup-class "NSObject")
-  
+
   ;; => #<OBJC-META:NS-OBJECT OBJC-CLASS:NS-OBJECT>
 #+end_src
 
@@ -101,8 +102,8 @@ To control the behaviour, you can use the MOP function ~ensure-class~, or even ~
 #+begin_src common-lisp
   (c2mop:ensure-class 'objc-class:ns-object
                       :metaclass 'objc:objc-class
-                      :auto-bind-properties nil
-                      :auto-register-methods nil)
+                      :auto-bind-properties nil   ; optionally disable auto property binding
+                      :auto-register-methods nil) ; optionally disable auto method registration
   ;; or
   (defclass objc-class:ns-object () ()
     (:metaclass objc-class))
@@ -115,7 +116,7 @@ FIXME: Currently we didn't implemented ~change-class~ relative methods on objc-c
 To make an instance:
 
 #+begin_src lisp
-  (make-instance (cls ns-object))
+  (make-instance (objc:cls ns-object))
 #+end_src
 
 Note that this use ~class_createInstance~ runtime function, and you may need to do additional initialization for the object.
@@ -123,7 +124,7 @@ Note that this use ~class_createInstance~ runtime function, and you may need to 
 or if you has the object's Obj-C pointer (the objc ~id~):
 
 #+begin_src lisp
-  (make-instance (cls ns-object) :objc-object <pointer>)
+  (make-instance (objc:cls ns-object) :objc-object <pointer>)
 #+end_src
 
 To call a method:
@@ -149,9 +150,31 @@ Use ~slot-value~ to get the Obj-C property:
 
 - [X] Wrapper for NSPoint, NSSize, NSRect, CGPoint, CGSize, CGRect
 - [ ] Parse type encoding for array, structure, union, bits
+- [ ] Keyword-style objc methods
 - [ ] Give a better way to (partially) disable auto-translation of (certain) objc properties
 - [ ] Give a better way to (partially) disable auto-translation of (certain) objc methods
 - [ ] Give a way to (partially) disable auto-translation of (certain) objc class
+
+*** TODO Tests [0%]
+
+- [ ] Page 1
+- [ ] Page 2
+- [ ] Page 3
+- [ ] Page 4
+- [ ] Page 5
+- [ ] Page 6
+- [ ] Page 7
+- [ ] Page 8
+- [ ] Page 9
+- [ ] Page 10
+- [ ] Page 11
+- [ ] Page 12
+- [ ] Page 13
+- [ ] Page 14
+- [ ] Page 15
+- [ ] Page 16
+- [ ] Page 17
+- [ ] Page 18
 
 *** TODO Documentation [0%]
 
