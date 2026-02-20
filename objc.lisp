@@ -5,7 +5,7 @@
 ;;; Objective-C to Lisp Binding with Transparent Layer
 
 ;;; Dependencies:
-;;; (ql:quickload '(:alexandria :anaphora :cffi :cffi-libffi :closer-mop :float-features :split-sequence :trivial-main-thread))
+;;; (ql:quickload '(:alexandria :anaphora :cffi :cffi-libffi :closer-mop :float-features :log4cl :split-sequence :trivial-main-thread))
 
 ;;; Packages:
 ;;; OBJC:              Main Package
@@ -108,10 +108,10 @@
     (def-translate-to   "OBJC-METHOD")
     (def-translate-to   "OBJC-PROP"))
 
-  ;; (defun parse-selector-name-to-arglist (str)
-  ;;   (mapcar (lambda (name)
-  ;;             (translate-name-from-foreign name (find-package "OBJC-METHOD")))
-  ;;           (split-sequence:split-sequence #\: str :remove-empty-subseqs t)))
+  (defun parse-selector-name-to-arglist (str)
+    (mapcar (lambda (name)
+              (translate-name-from-foreign name (find-package "OBJC-METHOD")))
+            (split-sequence:split-sequence #\: str :remove-empty-subseqs t)))
 
   (dolist (name '("NSObject" "NSProtocol"
                   "NSNumber" "NSValue"
@@ -352,6 +352,8 @@ attributes ::= {:return-type  ret-type} | ; T
     (:name :string)
     (:value :string))
 
+  (export '(objc-property-slot objc-property objc-property-attribute))
+
 
 ;;;; P6: The Obj-C Class
 
@@ -397,6 +399,8 @@ attributes ::= {:return-type  ret-type} | ; T
 
   (defmethod c2mop:validate-superclass ((c1 objc-instancetype) (c2 standard-class)) t)
 
+  (export '(objc-class objc-metaclass objc-instancetype objc-class-type))
+
 
 ;;;; P7: Obj-C property => Lisp slot converter
 
@@ -414,6 +418,7 @@ attributes ::= {:return-type  ret-type} | ; T
       (setf (char name 0)
             (char-upcase (char name 0)))
       (concatenate 'string "set" name)))
+  (export 'objc-property-default-setter-name)
   ;; --- END helper ---
   (defmethod c2mop:compute-effective-slot-definition :around ((class objc-class) name slots)
     (let ((slot      (car slots))
@@ -554,10 +559,12 @@ attributes ::= {:return-type  ret-type} | ; T
       (if (objc-raw::class-is-meta-class ptr)
           (translate-name-from-foreign name (find-package "OBJC-META"))
           (translate-name-from-foreign name (find-package "OBJC-CLASS")))))
+  (export 'class-ptr-symbol)
   ;; --- Helper ---
   (defun instancetype-ptr-symbol (ptr)
     (declare (inline instancetype-ptr-symbol))
     (intern (format nil "~16R" (pointer-address ptr)) "OBJC-INSTANCETYPE"))
+  (export 'instancetype-ptr-symbol)
   ;; --- Helper ---
   (defun compute-slot-specs-for-properties (class-ptr)
     (with-foreign-object (out-count :uint)
@@ -671,8 +678,7 @@ attributes ::= {:return-type  ret-type} | ; T
                 (with-foreign-object (out-count :uint)
                   (setf (mem-aref out-count :uint 0) 0)
                   (let* ((ptr (objc-raw::class-copy-method-list class-ptr out-count))
-                         (len (mem-aref out-count :uint 0))
-                         (arr (make-array len :fill-pointer 0)))
+                         (len (mem-aref out-count :uint 0)))
                     (unwind-protect
                          (loop for i below len
                                for method-ptr = (mem-aref ptr :pointer i)
@@ -747,6 +753,8 @@ attributes ::= {:return-type  ret-type} | ; T
                (objc-get-meta-class name-or-ptr)))
           (t (error "Invalid argument: ~A" name-or-ptr))))
 
+  (export '(ensure-objc-class ensure-objc-meta-class))
+
   ;; (defclass test-object (objc-class:ns-object)
   ;;   ((prop :return-type :pointer))
   ;;   (:metaclass objc-class:ns-object))
@@ -786,6 +794,8 @@ attributes ::= {:return-type  ret-type} | ; T
   (defmethod expand-to-foreign (obj (type objc-object-type))
     `(translate-to-objc-id ,obj))
 
+  (export '(translate-from-objc-id translate-to-objc-id objc-object-type))
+
 
 ;;;; P11: Wrapper for some class-info query functions
 
@@ -807,6 +817,8 @@ attributes ::= {:return-type  ret-type} | ; T
       (copy-list-ptrs class-copy-property-list class))
     (defun class-method-list-pointers (class)
       (copy-list-ptrs class-copy-method-list class)))
+
+  (export '(class-ivar-list-pointers class-property-list-pointers class-method-list-pointers))
 
 
 ;;;; P12: The Obj-C Method
@@ -834,14 +846,14 @@ attributes ::= {:return-type  ret-type} | ; T
 
 ;;; Convert to method
 
-  (defun translate-to-objc-method (ptr &rest arg-names)
+  (defun translate-to-objc-method (ptr)
     (unless (null-pointer-p ptr)
-      (let* ((sel (foreign-funcall "method_getName" :pointer ptr selector))
-             (argnum (- (objc-raw::method-get-number-of-arguments ptr) 2))
-             (lambda-list (append arg-names
-                                  (loop repeat (- argnum (length arg-names))
-                                        collect (gentemp "OBJC-METHOD-ARG-"))))
-             (type-encodings (loop for i from 2 below (+ argnum 2)
+      (let* ((sel (make-instance 'selector :objc-object (objc-raw::method-get-name ptr)))
+             (arg-nums (objc-raw::method-get-number-of-arguments ptr))
+             (lambda-list (mapcar (lambda (sym)
+                                    (gentemp (concatenate 'string (symbol-name sym) "-") "OBJC-METHOD"))
+                                  (last (parse-selector-name-to-arglist (selector-name sel)) (- arg-nums 2))))
+             (type-encodings (loop for i from 2 below arg-nums
                                    collect (objc-raw::method-copy-argument-type ptr i)))
              (specializers (loop for type in type-encodings
                                  collect (parse-objc-type-encoding-to-lisp type)))
@@ -872,7 +884,7 @@ attributes ::= {:return-type  ret-type} | ; T
 
 ;;; Convert to Generic Function
 
-  (defun ensure-objc-method (class object &rest arg-names)
+  (defun ensure-objc-method (class object)
     "Name can be a string, symbol, selector or cffi pointer of the method"
     (setq class (ensure-objc-class class))
     (let (name sel)
@@ -884,12 +896,10 @@ attributes ::= {:return-type  ret-type} | ; T
                       name (translate-name-from-foreign object (find-package "OBJC-METHOD"))))
         (symbol (setq sel (make-instance
                            'selector
-                           :name (translate-to-foreign object (find-package "OBJC-METHOD")))))
+                           :name (translate-to-foreign object (find-package "OBJC-METHOD")))
+                      name object))
         (t (if (pointerp object)
-               (setq sel (foreign-funcall
-                          "sel_registerName"
-                          :string (objc-raw::sel-get-name (objc-raw::method-get-name object))
-                          selector)
+               (setq sel (make-instance 'selector :objc-object (objc-raw::method-get-name object))
                      name (translate-name-from-foreign
                            (selector-name sel) (find-package "OBJC-METHOD")))
                (error "Wrong type of argument: ~A" object))))
@@ -901,7 +911,7 @@ attributes ::= {:return-type  ret-type} | ; T
             (assert (not (null-pointer-p method-ptr)))
             (log:debug "Registering Obj-C method function" name)
             (let ((gf (ensure-generic-function name)))
-              (add-method gf (apply #'translate-to-objc-method method-ptr arg-names))
+              (add-method gf (translate-to-objc-method method-ptr))
               gf)))))
 
 ;;; Defining new method
@@ -935,6 +945,8 @@ attributes ::= {:return-type  ret-type} | ; T
                ,@body)
              (objc-raw::class-replace-method ,class-obj (objc-obj sel) (callback ,lisp-name) ,objc-arg-types)
              (ensure-objc-method ,class-name (objc-raw::class-get-instance-method ,class-obj (objc-obj sel))))))))
+
+  (export '(objc-method-type objc-method translate-to-objc-method define-objc-method ensure-objc-method))
 
 ;;; ---
 
@@ -1267,6 +1279,26 @@ attributes ::= {:return-type  ret-type} | ; T
   (method objc-method)
   &rest)
 
+(export '(objc-ivar objc-property objc-imp objc-method-description
+          class-get-name class-get-superclass class-is-meta-class objc-get-instance-size
+          class-get-instance-variable class-get-class-variable class-add-ivar
+          class-copy-ivar-list class-get-ivar-layout class-set-ivar-layout
+          class-get-weak-ivar-layout class-set-weak-ivar-layout class-get-property
+          class-copy-property-list class-add-method class-get-instance-method
+          class-get-class-method class-copy-method-list class-replace-method
+          class-get-method-implementation class-responds-to-selector class-add-property
+          class-replace-property class-get-version class-set-version
+          class-create-instance objc-allocate-class-pair objc-dispose-class-pair
+          objc-register-class-pair objc-duplicate-class-pair object-get-indexed-ivar
+          object-get-ivar object-set-ivar object-get-class-name object-get-class
+          object-set-class objc-copy-class-list objc-lookup-class objc-get-class
+          objc-get-required-class objc-get-meta-class ivar-get-name ivar-get-type-encoding
+          ivar-get-offset method-get-name method-get-implementation method-get-type-encoding
+          method-copy-return-type method-copy-argument-type method-get-number-of-arguments
+          method-set-implementation method-exchange-implementation sel-get-name
+          sel-register-name sel-get-uid property-get-name property-copy-attribute-value
+          property-get-attributes property-copy-attribute-list objc-msg-send method-invoke))
+
 
 ;;;; P14: Obj-C built-in Structures
 
@@ -1362,6 +1394,8 @@ attributes ::= {:return-type  ret-type} | ; T
   (a-rect ns-rect)
   (b-rect ns-rect))
 
+(export '(cg-size cg-point cg-rect ns-range ns-point ns-size ns-rect ns-equal-rects))
+
 
 ;;;; P15: Utils
 
@@ -1395,6 +1429,8 @@ attributes ::= {:return-type  ret-type} | ; T
                   name)))
     `(selector ,name)))
 
+(export '(cls meta sel selector))
+
 
 ;;;; P16: Utils for LispWorks-flavor Obj-C bridge
 
@@ -1427,6 +1463,8 @@ attributes ::= {:return-type  ret-type} | ; T
 
 (defun string-to-ns-string (string)
   (funcall (sel string-with-utf8-string.) (cls ns-string) string))
+
+(export '(alloc-init-object invoke 'coerce-to-objc-class 'coerce-to-selector current-super can-invoke-p string-to-ns-string))
 
 
 ;; P17: The Obj-C Protocol
@@ -1561,6 +1599,13 @@ attributes ::= {:return-type  ret-type} | ; T
 (defmethod print-object ((obj objc-meta:protocol) stream)
   (print-unreadable-object (obj stream :type t :identity t)
     (princ (protocol-get-name obj) stream)))
+
+(export '(objc-protocol-type protocol-method-names
+          class-add-protocol class-conforms-to-protocol objc-get-protocol
+          objc-copy-protocol-list objc-allocate-protocol objc-register-protocol
+          protocol-add-method-description protocol-add-protocol protocol-get-name
+          protocol-is-equal protocol-copy-method-description-list protocol-copy-property-list
+          protocol-get-property protocol-copy-protocol-list protocol-conforms-to-protocol))
 
 
 ;; P18: Basic Obj-C objects
