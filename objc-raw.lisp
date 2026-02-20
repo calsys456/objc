@@ -1,26 +1,16 @@
-;; Copyright (C) 2025 The Calendrical System
-;; SPDX-License-Identifier: 0BSD
+;;;; Raw Obj-C Runtime Bindings
+;;; Copyright (C) 2025-2026 The Calendrical System
+;;; SPDX-License-Identifier: 0BSD
 
-;; Raw Obj-C Runtime Binding Functions.
-;; All symbols are internal, argument referenced by pointer.
-;; For Utility.
+;;; All symbols are internal, and function arguments are referenced by pointer.
+;;; For utility purpose, but also handy :)
+
+;;; Reference: https://developer.apple.com/documentation/objectivec/objective-c-runtime?language=objc
 
 (defpackage "OBJC-RAW"
   (:use "CL" "CFFI"))
 
 (in-package "OBJC-RAW")
-
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (define-foreign-library cocoa
-    (:darwin (:framework "Cocoa")))
-  (define-foreign-library foundation
-    (:darwin (:framework "Foundation")))
-  (define-foreign-library appkit
-    (:darwin (:framework "AppKit"))))
-
-(use-foreign-library foundation)
-(use-foreign-library cocoa)
-(use-foreign-library appkit)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (define-foreign-library cocoa
