@@ -5,7 +5,7 @@
 ;;; Objective-C to Lisp Binding with Transparent Layer
 
 ;;; Dependencies:
-;;; (ql:quickload '(:alexandria :anaphora :closer-mop :cffi :cffi-libffi :float-features :trivial-main-thread))
+;;; (ql:quickload '(:alexandria :anaphora :cffi :cffi-libffi :closer-mop :float-features :split-sequence :trivial-main-thread))
 
 ;;; Packages:
 ;;; OBJC:              Main Package
@@ -107,6 +107,11 @@
     (def-translate-to   "OBJC-META" t)
     (def-translate-to   "OBJC-METHOD")
     (def-translate-to   "OBJC-PROP"))
+
+  ;; (defun parse-selector-name-to-arglist (str)
+  ;;   (mapcar (lambda (name)
+  ;;             (translate-name-from-foreign name (find-package "OBJC-METHOD")))
+  ;;           (split-sequence:split-sequence #\: str :remove-empty-subseqs t)))
 
   (dolist (name '("NSObject" "NSProtocol"
                   "NSNumber" "NSValue"
@@ -436,20 +441,20 @@ attributes ::= {:return-type  ret-type} | ; T
                :initargs        (c2mop:slot-definition-initargs slot)
                :documentation   (documentation slot t)
                :property-name   prop-name
-               :getter-name     (or (property-copy-attribute-value prop "G")
+               :getter-name     (or (objc-raw::property-copy-attribute-value prop "G")
                                     prop-name)
-               :setter-name     (or (property-copy-attribute-value prop "S")
+               :setter-name     (or (objc-raw::property-copy-attribute-value prop "S")
                                     (objc-property-default-setter-name prop-name))
-               :read-only-p     (property-copy-attribute-value prop "R")
+               :read-only-p     (objc-raw::property-copy-attribute-value prop "R")
                :return-type     (parse-objc-type-encoding-to-c
-                                 (property-copy-attribute-value prop "T"))
-               :ivar-name       (property-copy-attribute-value prop "V")
-               :copy-p          (property-copy-attribute-value prop "C")
-               :retain-p        (property-copy-attribute-value prop "&")
-               :non-atomic-p    (property-copy-attribute-value prop "N")
-               :dynamic-p       (property-copy-attribute-value prop "D")
-               :weak-p          (property-copy-attribute-value prop "W")
-               :gc-p            (property-copy-attribute-value prop "P")))
+                                 (objc-raw::property-copy-attribute-value prop "T"))
+               :ivar-name       (objc-raw::property-copy-attribute-value prop "V")
+               :copy-p          (objc-raw::property-copy-attribute-value prop "C")
+               :retain-p        (objc-raw::property-copy-attribute-value prop "&")
+               :non-atomic-p    (objc-raw::property-copy-attribute-value prop "N")
+               :dynamic-p       (objc-raw::property-copy-attribute-value prop "D")
+               :weak-p          (objc-raw::property-copy-attribute-value prop "W")
+               :gc-p            (objc-raw::property-copy-attribute-value prop "P")))
             
             (let (prop-plist)
               (unless property-name
@@ -561,7 +566,7 @@ attributes ::= {:return-type  ret-type} | ; T
         (unwind-protect
              (loop for i below len
                    for prop = (mem-aref props-ptr :pointer i)
-                   for prop-name = (property-get-name prop)
+                   for prop-name = (objc-raw::property-get-name prop)
                    for slot-name = (translate-name-from-foreign prop-name
                                                                 (find-package "OBJC-PROP"))
                    collect (list :name slot-name
@@ -663,8 +668,16 @@ attributes ::= {:return-type  ret-type} | ; T
                                 args)))
               ;;; For automatic Obj-C method => Lisp method binding
               (when auto-register-methods
-                (loop for ptr across (class-method-list-pointers class)
-                      do (ensure-objc-method class ptr)))
+                (with-foreign-object (out-count :uint)
+                  (setf (mem-aref out-count :uint 0) 0)
+                  (let* ((ptr (objc-raw::class-copy-method-list class-ptr out-count))
+                         (len (mem-aref out-count :uint 0))
+                         (arr (make-array len :fill-pointer 0)))
+                    (unwind-protect
+                         (loop for i below len
+                               for method-ptr = (mem-aref ptr :pointer i)
+                               do (ensure-objc-method class method-ptr))
+                      (foreign-free ptr)))))
               class))
           ;; Defining new Obj-C class from Lisp
           (let ((super-ptr (aif (find-if (lambda (class) (typep class 'objc-class))
@@ -1679,7 +1692,11 @@ attributes ::= {:return-type  ret-type} | ; T
   :non-retained
   :buffered)
 
-(defcenum ns-pasteboard-reading-options :data :string :property-list :keyed-archive)
+(defcenum ns-pasteboard-reading-options
+  :data
+  :string
+  :property-list
+  :keyed-archive)
 
 (defun main ()
   (trivial-main-thread:with-body-in-main-thread (:blocking t)

@@ -155,6 +155,10 @@ Use ~slot-value~ to get the Obj-C property:
 - [ ] Give a better way to (partially) disable auto-translation of (certain) objc methods
 - [ ] Give a way to (partially) disable auto-translation of (certain) objc class
 
+*** TODO AppKit Bindings [0%]
+
+- [ ] NSApplication
+
 *** TODO Tests [0%]
 
 - [ ] Page 1
