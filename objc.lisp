@@ -304,7 +304,8 @@
      (weak-p        :initarg :weak-p)
      (gc-p          :initarg :gc-p)
 
-     (from-objc     :initarg :from-objc)
+     (from-objc     :initform nil
+                    :initarg :from-objc)
      (lisp-only     :initform nil
                     :initarg :lisp-only))
     (:documentation
@@ -551,6 +552,9 @@ attributes ::= {:return-type  ret-type} | ; T
 
 
 ;;;; P8: Obj-C class => Lisp class converter
+
+  (defvar *not-registered-classes* nil
+    "A list of objc-class objects that are allocated but yet not registered in Obj-C runtime.")
   
   ;; --- Helper ---
   (defun class-ptr-symbol (ptr)
@@ -581,17 +585,18 @@ attributes ::= {:return-type  ret-type} | ; T
                                  :from-objc t))
           (foreign-free props-ptr)))))
   ;; --- END Helper ---
-  (defmethod c2mop:ensure-class-using-class :around ((class class) name &rest args &key metaclass)
-    (unless (subtypep metaclass 'objc-class)
-      (return-from c2mop:ensure-class-using-class (call-next-method)))
-    (unintern name)
-    (apply #'c2mop:ensure-class-using-class nil name args))
+  (defmethod c2mop:ensure-class-using-class :around ((class objc-object) name &rest args &key metaclass)
+    (if (subtypep metaclass 'objc-class)
+        (apply #'c2mop:ensure-class-using-class nil name args)
+        (return-from c2mop:ensure-class-using-class (call-next-method))))
 
   (defmethod c2mop:ensure-class-using-class
       :around ((class null) name &rest args
                &key direct-superclasses direct-slots metaclass
                  objc-class-name objc-object
-                 (auto-bind-properties t) (auto-register-methods t))
+                 (auto-bind-properties t) (auto-register-methods t)
+               ;; Recursive process args, which should be removed before call-next-method
+                 instance-class)
     ;; Pass if it is not intended as an Obj-C class
     (unless (subtypep metaclass 'objc-class)
       (return-from c2mop:ensure-class-using-class (call-next-method)))
@@ -614,13 +619,27 @@ attributes ::= {:return-type  ret-type} | ; T
                   (objc-raw::class-get-name class-ptr)))
           (unless objc-class-name
             (setq objc-class-name (translate-name-to-foreign name (find-package "OBJC-CLASS")))))
-      ;; Try to find the possibly existing class
+      ;; Try to find the class that possibly existed in Obj-C runtime
       (when (or (null class-ptr) (null-pointer-p class-ptr))
-        (let ((ptr (if (subtypep metaclass 'objc-metaclass)
-                       (objc-raw::objc-lookup-class objc-class-name)
-                       (objc-raw::objc-get-meta-class objc-class-name))))
-          (unless (null-pointer-p ptr)
-            (setq class-ptr ptr))))
+        (aif (find-if (lambda (cls)
+                        (string= (objc-raw::class-get-name (objc-obj cls)) objc-class-name))
+                      *not-registered-classes*)
+             (if (subtypep metaclass 'objc-metaclass)
+                 (error "Obj-C doesn't allow subclassing metaclass directly.~%Subclassing a normal class and get its paired metaclass instead.")
+                 (progn (log:warn "Redefining Obj-C class ~A before registration, dispose previously allocated class pair."
+                                  objc-class-name)
+                        (objc-raw::objc-dispose-class-pair (objc-obj it))
+                        (alexandria:deletef *not-registered-classes* it)))
+             (if (subtypep metaclass 'objc-metaclass)
+                 (let ((ptr (objc-raw::objc-get-meta-class objc-class-name)))
+                   (unless (null-pointer-p ptr)
+                     (setq class-ptr ptr)))
+                 (let ((ptr (objc-raw::objc-lookup-class objc-class-name)))
+                   (unless (null-pointer-p ptr)
+                     (if (objc-raw::class-is-meta-class ptr)
+                         (error "Found a metaclass when calling objc_lookUpClass(~A).~%There may be a class that is allocated but yet not registered, and is not controlled by the lisp side.~%This is an unspecified behavior and you cannot relying on this anymore."
+                                objc-class-name)
+                         (setq class-ptr ptr)))))))
       ;; Let's rock & roll
       (if class-ptr
           ;; Bind existing class to Lisp
@@ -631,20 +650,24 @@ attributes ::= {:return-type  ret-type} | ; T
                   ;; Put MetaClass into our package arbitrarily
                   (let ((new-name (intern (symbol-name name) "OBJC-META")))
                     (setq name new-name))
-                  (log:debug "Loading Meta Class" objc-class-name "into" name)
+                  (log:debug "Loading Obj-C Meta Class ~A into ~S" objc-class-name name)
                   (setq direct-superclasses
-                        (let* ((base-class (objc-raw::objc-lookup-class objc-class-name))
-                               (base-super (objc-raw::class-get-superclass base-class)))
-                          (if (null-pointer-p base-super)
+                        (let ((instance-super (objc-raw::class-get-superclass
+                                               (or instance-class
+                                                   (objc-raw::objc-lookup-class objc-class-name)))))
+                          (when instance-class
+                            (remf args :instance-class))
+                          (if (null-pointer-p instance-super)
                               (list (find-class 'objc-class))
-                              (list  (foreign-funcall
-                                      "objc_getMetaClass"
-                                      :string (objc-raw::class-get-name base-super)
-                                      objc-class))))
+                              (let ((instance-super-meta (objc-raw::objc-get-meta-class
+                                                          (objc-raw::class-get-name instance-super))))
+                                (list (c2mop:ensure-class (class-ptr-symbol instance-super-meta)
+                                                          :objc-object instance-super-meta
+                                                          :metaclass 'objc-metaclass)))))
                         metaclass (find-class 'objc-metaclass)))
                 ;; Normal class
                 (progn
-                  (log:debug "Loading Normal Class" objc-class-name "into" name)
+                  (log:debug "Loading Obj-C Normal Class ~A into ~S" objc-class-name name)
                   (setq direct-superclasses
                         (let ((super-ptr (objc-raw::class-get-superclass class-ptr)))
                           (if (null-pointer-p super-ptr)
@@ -686,27 +709,38 @@ attributes ::= {:return-type  ret-type} | ; T
                       (foreign-free ptr)))))
               class))
           ;; Defining new Obj-C class from Lisp
-          (let ((super-ptr (aif (find-if (lambda (class) (typep class 'objc-class))
-                                         direct-superclasses)
-                                (slot-value it 'obj)
-                                (null-pointer)))
-                (meta-ptr (objc-raw::objc-get-meta-class objc-class-name)))
-            (setq class-ptr (objc-raw::objc-allocate-class-pair super-ptr objc-class-name 0))
-            (objc-raw::objc-register-class-pair class-ptr)
-            (setq metaclass (c2mop:ensure-class (class-ptr-symbol meta-ptr)
+          (let* ((super-ptr (aif (find-if (lambda (class) (typep class 'objc-class))
+                                          direct-superclasses)
+                                 (objc-obj it)
+                                 (null-pointer)))
+                 (class-ptr (progn
+                              (log:debug "Subclassing Obj-C class ~A based on ~A into ~S"
+                                         objc-class-name
+                                         (objc-raw::class-get-name super-ptr)
+                                         name)
+                              (objc-raw::objc-allocate-class-pair super-ptr objc-class-name 0)))
+                 (meta-ptr  (objc-raw::object-get-class class-ptr))
+                 (metaclass (c2mop:ensure-class (class-ptr-symbol meta-ptr)
                                                 :objc-object meta-ptr
-                                                :metaclass 'objc-class))
+                                                :instance-class class-ptr
+                                                :metaclass 'objc-class)))
             (when auto-bind-properties
               (setq direct-slots
                     (nconc direct-slots (compute-slot-specs-for-properties class-ptr))))
-            (apply #'call-next-method class name
-                   :direct-superclasses direct-superclasses
-                   :direct-slots direct-slots
-                   :metaclass metaclass
-                   :objc-class-name objc-class-name
-                   :objc-object class-ptr
-                   args)))))
-  
+            (let ((cls (apply #'call-next-method class name
+                              :direct-superclasses direct-superclasses
+                              :direct-slots direct-slots
+                              :metaclass metaclass
+                              :objc-class-name objc-class-name
+                              :objc-object class-ptr
+                              args)))
+              (push cls *not-registered-classes*)
+              cls)))))
+
+  (defmethod c2mop:finalize-inheritance :after ((class objc-class))
+    (objc-raw::objc-register-class-pair (objc-obj class))
+    (alexandria:deletef *not-registered-classes* class))
+
 
 ;;;; P9: Helper Functions
 
@@ -739,25 +773,25 @@ attributes ::= {:return-type  ret-type} | ; T
                (foreign-funcall "objc_lookUpClass" :string object objc-class)))
           (t (error "Invalid argument: ~A" object))))
 
-  (defun ensure-objc-meta-class (name-or-ptr)
-    (cond ((pointerp name-or-ptr)
-           (ensure-objc-class name-or-ptr))
-          ((symbolp name-or-ptr)
-           (or (find-class name-or-ptr nil)
+  (defun ensure-objc-meta-class (object)
+    (cond ((pointerp object)
+           (ensure-objc-class object))
+          ((typep object 'objc-metaclass)
+           object)
+          ((typep object 'objc-class)
+           (ensure-objc-class (objc-raw::object-get-class (objc-obj object))))
+          ((symbolp object)
+           (or (find-class object nil)
                (objc-get-meta-class
-                (translate-name-to-foreign name-or-ptr (find-package "OBJC-META")))))
-          ((stringp name-or-ptr)
+                (translate-name-to-foreign object (find-package "OBJC-META")))))
+          ((stringp object)
            (or (find-class
-                (translate-name-from-foreign name-or-ptr (find-package "OBJC-META"))
+                (translate-name-from-foreign object (find-package "OBJC-META"))
                 nil)
-               (objc-get-meta-class name-or-ptr)))
-          (t (error "Invalid argument: ~A" name-or-ptr))))
+               (objc-get-meta-class object)))
+          (t (error "Invalid argument: ~A" object))))
 
   (export '(ensure-objc-class ensure-objc-meta-class))
-
-  ;; (defclass test-object (objc-class:ns-object)
-  ;;   ((prop :return-type :pointer))
-  ;;   (:metaclass objc-class:ns-object))
 
 
 ;;;; P10: Obj-C Object (the objc `id') foreign translator
@@ -1464,7 +1498,7 @@ attributes ::= {:return-type  ret-type} | ; T
 (defun string-to-ns-string (string)
   (funcall (sel string-with-utf8-string.) (cls ns-string) string))
 
-(export '(alloc-init-object invoke 'coerce-to-objc-class 'coerce-to-selector current-super can-invoke-p string-to-ns-string))
+(export '(alloc-init-object invoke coerce-to-objc-class coerce-to-selector current-super can-invoke-p string-to-ns-string))
 
 
 ;; P17: The Obj-C Protocol

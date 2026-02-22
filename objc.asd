@@ -1,6 +1,0 @@
-(asdf:defsystem objc
-  :author "The Calendrical System"
-  :license "0BSD"
-  :depends-on (:alexandria :anaphora :closer-mop :cffi :cffi-libffi :float-features :log4cl :trivial-main-thread)
-  :components ((:file "objc-raw")
-               (:file "objc")))

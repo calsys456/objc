@@ -146,7 +146,7 @@ Use ~slot-value~ to get the Obj-C property:
 
 ** Todos
 
-*** TODO Features [20%]
+*** TODO Features [22%]
 
 - [X] Wrapper for NSPoint, NSSize, NSRect, CGPoint, CGSize, CGRect
 - [ ] Parse type encoding for array, structure, union, bits
@@ -154,6 +154,14 @@ Use ~slot-value~ to get the Obj-C property:
 - [ ] Give a better way to (partially) disable auto-translation of (certain) objc properties
 - [ ] Give a better way to (partially) disable auto-translation of (certain) objc methods
 - [ ] Give a way to (partially) disable auto-translation of (certain) objc class
+
+Subclassing
+
+- [X] Basic
+- [X] Redefine subclass
+- [ ] Dispose subclass
+- [ ] Slot (Property)
+- [ ] Method
 
 *** TODO AppKit Bindings [0%]
 
